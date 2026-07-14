@@ -1,0 +1,19 @@
+{
+  "name": "ocis-workflows",
+  "version": "0.1.0",
+  "description": "oCIS extension for building automated AI workflows on your files.",
+  "license": "Apache-2.0",
+  "author": "ownCloud GmbH - A Kiteworks Company and ownCloud contributors",
+  "private": true,
+  "homepage": "https://github.com/owncloud/ocis-workflows",
+  "type": "module",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.6"
+  },
+  "packageManager": "pnpm@10.34.1"
+}
