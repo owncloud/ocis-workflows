@@ -7,3 +7,14 @@ SPDX-PackageDownloadLocation = "https://github.com/owncloud/ocis-workflows"
 path = "**"
 SPDX-FileCopyrightText = "2026 ownCloud GmbH - A Kiteworks Company and ownCloud contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# apprise-go (github.com/unraid/apprise-go) is a Go module dependency, not vendored into
+# this repo — there's no in-tree file to tag BSD-2-Clause directly. Its license text is
+# still bundled (LICENSES/BSD-2-Clause.txt) for redistribution compliance since it's
+# statically linked into the backend binary; NOTICE.md is the file that documents and
+# references it, so it carries the combined identifier to satisfy REUSE's "every license
+# text must be used" check.
+[[annotations]]
+path = "NOTICE.md"
+SPDX-FileCopyrightText = ["2026 ownCloud GmbH - A Kiteworks Company and ownCloud contributors", "2025 Chris Caron"]
+SPDX-License-Identifier = "Apache-2.0 AND BSD-2-Clause"
