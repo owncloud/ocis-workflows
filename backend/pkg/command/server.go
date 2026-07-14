@@ -12,11 +12,14 @@ import (
 
 	"github.com/owncloud/ocis-workflows/pkg/auth"
 	"github.com/owncloud/ocis-workflows/pkg/config"
+	"github.com/owncloud/ocis-workflows/pkg/executor"
+	"github.com/owncloud/ocis-workflows/pkg/llm"
 	"github.com/owncloud/ocis-workflows/pkg/logging"
 	"github.com/owncloud/ocis-workflows/pkg/ocisclient"
 	debugserver "github.com/owncloud/ocis-workflows/pkg/server/debug"
 	httpserver "github.com/owncloud/ocis-workflows/pkg/server/http"
 	"github.com/owncloud/ocis-workflows/pkg/service"
+	"github.com/owncloud/ocis-workflows/pkg/webdavfile"
 	"github.com/owncloud/ocis-workflows/pkg/webdavstore"
 )
 
@@ -30,7 +33,10 @@ func RunServer(cfg config.Config) error {
 
 	ocisClient := ocisclient.New(cfg.OCISURL, cfg.OCISInsecure)
 	store := webdavstore.New(cfg.OCISURL, ocisClient, cfg.OCISInsecure)
-	workflowsHandler := service.NewWorkflowsHandler(store, log)
+	files := webdavfile.New(cfg.OCISURL, ocisClient, cfg.OCISInsecure)
+	llmClient := llm.New(cfg.LLMEndpoint, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMMaxTokens)
+	graphExecutor := executor.New(llmClient, files, ocisClient, log)
+	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, log)
 	validator := auth.NewValidator(cfg.OCISURL, cfg.AllowedOrigin, cfg.OCISInsecure)
 
 	apiHandler := httpserver.New(httpserver.Options{

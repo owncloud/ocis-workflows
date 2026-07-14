@@ -28,7 +28,9 @@ func New(opts Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	// Generous enough to cover a synchronous workflow run (LLM calls alone are allowed up
+	// to 60s by pkg/llm), not just simple CRUD requests.
+	r.Use(middleware.Timeout(90 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{opts.AllowedOrigin},
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions},
@@ -48,6 +50,12 @@ func New(opts Options) http.Handler {
 				r.Get("/", opts.Workflows.Get)
 				r.Patch("/", opts.Workflows.Patch)
 				r.Delete("/", opts.Workflows.Delete)
+				r.Post("/run", opts.Workflows.Run)
+
+				r.Route("/executions", func(r chi.Router) {
+					r.Get("/", opts.Workflows.ListExecutions)
+					r.Get("/{execId}", opts.Workflows.GetExecution)
+				})
 			})
 		})
 	})
