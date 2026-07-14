@@ -44,4 +44,8 @@ test('build and save a trigger -> LLM -> action workflow using the node picker',
   const row = page.getByRole('row').filter({ hasText: workflowName })
   await expect(row).toBeVisible()
   await expect(row.getByText('Active')).toBeVisible()
+
+  // Clean up via the UI's own delete flow — exercises it and leaves no test data behind.
+  await row.getByRole('button', { name: 'Delete' }).click()
+  await expect(row).toBeHidden()
 })
