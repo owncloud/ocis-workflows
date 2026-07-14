@@ -96,6 +96,11 @@ export interface ExecutionRecord {
   error?: { code: string; message: string }
 }
 
+export interface AutomationStatus {
+  connected: boolean
+  expirationDateTime?: string
+}
+
 export interface GraphCollection<T> {
   value: T[]
 }

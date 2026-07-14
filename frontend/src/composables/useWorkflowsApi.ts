@@ -1,5 +1,6 @@
 import { useAuthStore } from '@ownclouders/web-pkg'
 import type {
+  AutomationStatus,
   ExecutionRecord,
   GraphCollection,
   GraphError,
@@ -112,6 +113,13 @@ export function useWorkflowsApi(backendUrl: string) {
       `/me/workflows/${encodeURIComponent(workflowId)}/executions/${encodeURIComponent(execId)}`
     )
 
+  const getAutomationStatus = (): Promise<AutomationStatus> => request<AutomationStatus>('/me/automation')
+
+  const connectAutomation = (): Promise<AutomationStatus> =>
+    request<AutomationStatus>('/me/automation', { method: 'POST' })
+
+  const disconnectAutomation = (): Promise<void> => request<void>('/me/automation', { method: 'DELETE' })
+
   return {
     listWorkflows,
     getWorkflow,
@@ -120,6 +128,9 @@ export function useWorkflowsApi(backendUrl: string) {
     deleteWorkflow,
     runWorkflow,
     listExecutions,
-    getExecution
+    getExecution,
+    getAutomationStatus,
+    connectAutomation,
+    disconnectAutomation
   }
 }
