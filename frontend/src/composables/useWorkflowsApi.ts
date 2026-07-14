@@ -32,7 +32,7 @@ export function useWorkflowsApi(backendUrl: string) {
     return headers
   }
 
-  const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const rawRequest = async (path: string, init?: RequestInit): Promise<Response> => {
     const res = await fetch(`${base}${path}`, {
       ...init,
       headers: { ...buildHeaders(), ...(init?.headers ?? {}) }
@@ -51,10 +51,14 @@ export function useWorkflowsApi(backendUrl: string) {
       throw new WorkflowsApiError(res.status, code, message)
     }
 
+    return res
+  }
+
+  const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    const res = await rawRequest(path, init)
     if (res.status === 204) {
       return undefined as T
     }
-
     return (await res.json()) as T
   }
 
@@ -82,13 +86,31 @@ export function useWorkflowsApi(backendUrl: string) {
   const deleteWorkflow = (id: string): Promise<void> =>
     request<void>(`/me/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
-  const runWorkflow = (id: string): Promise<void> =>
-    request<void>(`/me/workflows/${encodeURIComponent(id)}/run`, { method: 'POST' })
+  /** Runs a workflow and returns the id of the resulting execution record (parsed from the
+   *  202 response's Location header — the backend runs synchronously today, but this keeps
+   *  the frontend honest about the API's async shape). */
+  const runWorkflow = async (id: string, resourcePath?: string): Promise<string> => {
+    const res = await rawRequest(`/me/workflows/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+      body: resourcePath ? JSON.stringify({ resourcePath }) : undefined
+    })
+    const location = res.headers.get('Location') ?? ''
+    const execId = location.split('/').pop()
+    if (!execId) {
+      throw new WorkflowsApiError(res.status, 'noExecutionId', 'run response had no execution id')
+    }
+    return execId
+  }
 
   const listExecutions = (workflowId: string): Promise<ExecutionRecord[]> =>
     request<GraphCollection<ExecutionRecord>>(
       `/me/workflows/${encodeURIComponent(workflowId)}/executions`
     ).then((c) => c.value)
+
+  const getExecution = (workflowId: string, execId: string): Promise<ExecutionRecord> =>
+    request<ExecutionRecord>(
+      `/me/workflows/${encodeURIComponent(workflowId)}/executions/${encodeURIComponent(execId)}`
+    )
 
   return {
     listWorkflows,
@@ -97,6 +119,7 @@ export function useWorkflowsApi(backendUrl: string) {
     updateWorkflow,
     deleteWorkflow,
     runWorkflow,
-    listExecutions
+    listExecutions,
+    getExecution
   }
 }
