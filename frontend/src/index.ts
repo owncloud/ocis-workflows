@@ -4,13 +4,14 @@ import { RouteRecordRaw } from 'vue-router'
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { setAppConfig } from './composables/useAppConfig'
+import { appId } from './router'
 
 export default defineWebApplication({
   setup(args) {
     const { $gettext } = useGettext()
 
     const appInfo = {
-      id: 'workflows',
+      id: appId,
       name: $gettext('Workflows'),
       icon: 'flow-chart',
       color: '#2a6f97'

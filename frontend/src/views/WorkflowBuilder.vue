@@ -38,7 +38,7 @@
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from '@ownclouders/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -51,18 +51,18 @@ import LlmNode from '../components/nodes/LlmNode.vue'
 import ActionNode from '../components/nodes/ActionNode.vue'
 import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
+import { builderPath } from '../router'
 import type { TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
 const props = defineProps<{ id: string }>()
 
 const { $gettext } = useGettext()
 const route = useRoute()
-const router = useRouter()
 const appConfig = useAppConfig()
 const api = useWorkflowsApi(appConfig.backendUrl)
 const { addNodes } = useVueFlow()
 
-const isNew = () => (props.id || (route.params.id as string)) === 'new'
+const isNew = () => (props.id || (route.value.params.id as string)) === 'new'
 
 const name = ref($gettext('Untitled workflow'))
 const triggerType = ref<TriggerType>('manual')
@@ -86,7 +86,7 @@ const load = async () => {
     return
   }
   try {
-    const workflow = await api.getWorkflow(route.params.id as string)
+    const workflow = await api.getWorkflow(route.value.params.id as string)
     name.value = workflow.name
     triggerType.value = workflow.trigger.type
     nodes.value = workflow.graph.nodes.length ? workflow.graph.nodes : [defaultTriggerNode()]
@@ -139,9 +139,9 @@ const save = async () => {
     }
     if (isNew()) {
       const created = await api.createWorkflow(payload)
-      await router.replace({ name: 'workflow-builder', params: { id: created.id } })
+      window.location.assign(builderPath(created.id))
     } else {
-      await api.updateWorkflow(route.params.id as string, payload)
+      await api.updateWorkflow(route.value.params.id as string, payload)
     }
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
