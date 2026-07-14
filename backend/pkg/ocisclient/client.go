@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Client calls oCIS's public Graph API on behalf of a forwarded user bearer token.
+// Client calls oCIS's public Graph API on behalf of a forwarded user bearer authHeader.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
@@ -46,13 +46,13 @@ type meResponse struct {
 	ID string `json:"id"`
 }
 
-// Me resolves the id of the user the given bearer token belongs to, via the Graph API.
-func (c *Client) Me(ctx context.Context, token string) (string, error) {
+// Me resolves the id of the user the given bearer authHeader belongs to, via the Graph API.
+func (c *Client) Me(ctx context.Context, authHeader string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/graph/v1.0/me", nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {

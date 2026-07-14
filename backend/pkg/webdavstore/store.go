@@ -1,6 +1,6 @@
 // Package webdavstore persists workflow definitions and execution history as JSON files
 // via WebDAV, in a hidden folder inside the caller's own oCIS space — the same public API
-// our action nodes call, using the caller's own forwarded token. This is user content, not
+// our action nodes call, using the caller's own forwarded authHeader. This is user content, not
 // this sidecar's own operational state, so it belongs in the user's space, not a local DB.
 package webdavstore
 
@@ -54,22 +54,22 @@ func (s *Store) davBase(userID string) string {
 	return s.ocisURL + "/remote.php/dav/files/" + userID
 }
 
-func (s *Store) ensureDirs(ctx context.Context, token, userID string) error {
+func (s *Store) ensureDirs(ctx context.Context, authHeader, userID string) error {
 	base := s.davBase(userID)
 	for _, segment := range []string{rootDir, rootDir + "/" + definitionsDir} {
-		if err := s.mkcol(ctx, token, base+"/"+segment); err != nil {
+		if err := s.mkcol(ctx, authHeader, base+"/"+segment); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) mkcol(ctx context.Context, token, url string) error {
+func (s *Store) mkcol(ctx context.Context, authHeader, url string) error {
 	req, err := http.NewRequestWithContext(ctx, "MKCOL", url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -99,14 +99,14 @@ func (s *Store) executionPath(userID, workflowID, execID string) string {
 }
 
 // PutExecution creates or overwrites an execution record.
-func (s *Store) PutExecution(ctx context.Context, token string, rec model.ExecutionRecord) error {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) PutExecution(ctx context.Context, authHeader string, rec model.ExecutionRecord) error {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return fmt.Errorf("resolve current user: %w", err)
 	}
 	base := s.davBase(userID)
 	for _, segment := range []string{rootDir, rootDir + "/" + executionsDir, rootDir + "/" + executionsDir + "/" + rec.WorkflowID} {
-		if err := s.mkcol(ctx, token, base+"/"+segment); err != nil {
+		if err := s.mkcol(ctx, authHeader, base+"/"+segment); err != nil {
 			return fmt.Errorf("ensure execution storage folders: %w", err)
 		}
 	}
@@ -120,7 +120,7 @@ func (s *Store) PutExecution(ctx context.Context, token string, rec model.Execut
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
@@ -136,8 +136,8 @@ func (s *Store) PutExecution(ctx context.Context, token string, rec model.Execut
 }
 
 // GetExecution returns a single execution record.
-func (s *Store) GetExecution(ctx context.Context, token, workflowID, execID string) (*model.ExecutionRecord, error) {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) GetExecution(ctx context.Context, authHeader, workflowID, execID string) (*model.ExecutionRecord, error) {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve current user: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *Store) GetExecution(ctx context.Context, token, workflowID, execID stri
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -173,13 +173,13 @@ func (s *Store) GetExecution(ctx context.Context, token, workflowID, execID stri
 }
 
 // ListExecutions returns every execution record for a workflow, most recent first.
-func (s *Store) ListExecutions(ctx context.Context, token, workflowID string) ([]model.ExecutionRecord, error) {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) ListExecutions(ctx context.Context, authHeader, workflowID string) ([]model.ExecutionRecord, error) {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve current user: %w", err)
 	}
 
-	names, err := s.propfindJSONNames(ctx, token, s.executionsDirURL(userID, workflowID))
+	names, err := s.propfindJSONNames(ctx, authHeader, s.executionsDirURL(userID, workflowID))
 	if err != nil {
 		// The executions folder for this workflow may not exist yet — that's an empty
 		// history, not an error.
@@ -189,7 +189,7 @@ func (s *Store) ListExecutions(ctx context.Context, token, workflowID string) ([
 	records := make([]model.ExecutionRecord, 0, len(names))
 	for _, name := range names {
 		id := strings.TrimSuffix(name, ".json")
-		rec, err := s.GetExecution(ctx, token, workflowID, id)
+		rec, err := s.GetExecution(ctx, authHeader, workflowID, id)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
@@ -203,18 +203,18 @@ func (s *Store) ListExecutions(ctx context.Context, token, workflowID string) ([
 }
 
 // List returns every workflow definition stored in the caller's space.
-func (s *Store) List(ctx context.Context, token string) ([]model.WorkflowDefinition, error) {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) List(ctx context.Context, authHeader string) ([]model.WorkflowDefinition, error) {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve current user: %w", err)
 	}
 
-	if err := s.ensureDirs(ctx, token, userID); err != nil {
+	if err := s.ensureDirs(ctx, authHeader, userID); err != nil {
 		return nil, fmt.Errorf("ensure storage folders: %w", err)
 	}
 
 	dirURL := fmt.Sprintf("%s/%s/%s", s.davBase(userID), rootDir, definitionsDir)
-	names, err := s.propfindJSONNames(ctx, token, dirURL)
+	names, err := s.propfindJSONNames(ctx, authHeader, dirURL)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *Store) List(ctx context.Context, token string) ([]model.WorkflowDefinit
 	workflows := make([]model.WorkflowDefinition, 0, len(names))
 	for _, name := range names {
 		id := strings.TrimSuffix(name, ".json")
-		wf, err := s.getByPath(ctx, token, s.definitionPath(userID, id))
+		wf, err := s.getByPath(ctx, authHeader, s.definitionPath(userID, id))
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
@@ -235,21 +235,21 @@ func (s *Store) List(ctx context.Context, token string) ([]model.WorkflowDefinit
 }
 
 // Get returns a single workflow definition by id.
-func (s *Store) Get(ctx context.Context, token, id string) (*model.WorkflowDefinition, error) {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) Get(ctx context.Context, authHeader, id string) (*model.WorkflowDefinition, error) {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return nil, fmt.Errorf("resolve current user: %w", err)
 	}
-	return s.getByPath(ctx, token, s.definitionPath(userID, id))
+	return s.getByPath(ctx, authHeader, s.definitionPath(userID, id))
 }
 
 // Put creates or overwrites a workflow definition.
-func (s *Store) Put(ctx context.Context, token string, wf model.WorkflowDefinition) error {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) Put(ctx context.Context, authHeader string, wf model.WorkflowDefinition) error {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return fmt.Errorf("resolve current user: %w", err)
 	}
-	if err := s.ensureDirs(ctx, token, userID); err != nil {
+	if err := s.ensureDirs(ctx, authHeader, userID); err != nil {
 		return fmt.Errorf("ensure storage folders: %w", err)
 	}
 
@@ -262,7 +262,7 @@ func (s *Store) Put(ctx context.Context, token string, wf model.WorkflowDefiniti
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
@@ -278,8 +278,8 @@ func (s *Store) Put(ctx context.Context, token string, wf model.WorkflowDefiniti
 }
 
 // Delete removes a workflow definition by id.
-func (s *Store) Delete(ctx context.Context, token, id string) error {
-	userID, err := s.ocisClient.Me(ctx, token)
+func (s *Store) Delete(ctx context.Context, authHeader, id string) error {
+	userID, err := s.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return fmt.Errorf("resolve current user: %w", err)
 	}
@@ -288,7 +288,7 @@ func (s *Store) Delete(ctx context.Context, token, id string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -306,12 +306,12 @@ func (s *Store) Delete(ctx context.Context, token, id string) error {
 	}
 }
 
-func (s *Store) getByPath(ctx context.Context, token, url string) (*model.WorkflowDefinition, error) {
+func (s *Store) getByPath(ctx context.Context, authHeader, url string) (*model.WorkflowDefinition, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -348,14 +348,14 @@ type response struct {
 	Href string `xml:"href"`
 }
 
-func (s *Store) propfindJSONNames(ctx context.Context, token, dirURL string) ([]string, error) {
+func (s *Store) propfindJSONNames(ctx context.Context, authHeader, dirURL string) ([]string, error) {
 	body := `<?xml version="1.0" encoding="utf-8" ?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`
 
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", dirURL, strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/xml")
 	req.Header.Set("Depth", "1")
 

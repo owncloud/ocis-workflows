@@ -23,17 +23,17 @@ type LLMClient interface {
 
 // FileClient performs file operations in the caller's own space. Satisfied by *webdavfile.Client.
 type FileClient interface {
-	GetContent(ctx context.Context, token, davPath string) ([]byte, string, error)
-	Move(ctx context.Context, token, davPath, destDavPath string) error
-	Copy(ctx context.Context, token, davPath, destDavPath string) error
-	Comment(ctx context.Context, token, davPath, text string) error
+	GetContent(ctx context.Context, authHeader, davPath string) ([]byte, string, error)
+	Move(ctx context.Context, authHeader, davPath, destDavPath string) error
+	Copy(ctx context.Context, authHeader, davPath, destDavPath string) error
+	Comment(ctx context.Context, authHeader, davPath, text string) error
 }
 
 // GraphClient performs Graph-API-only operations (tags have no WebDAV equivalent).
 // Satisfied by *ocisclient.Client.
 type GraphClient interface {
-	ResolveItemID(ctx context.Context, token, davPath string) (string, error)
-	AssignTag(ctx context.Context, token, itemID, tag string) error
+	ResolveItemID(ctx context.Context, authHeader, davPath string) (string, error)
+	AssignTag(ctx context.Context, authHeader, itemID, tag string) error
 }
 
 // Executor runs a WorkflowDefinition's graph against a target resource.
@@ -49,11 +49,11 @@ func New(llmClient LLMClient, files FileClient, graph GraphClient, log *slog.Log
 	return &Executor{llm: llmClient, files: files, graph: graph, log: log}
 }
 
-// Run executes wf's graph, starting from its trigger node, using token for every oCIS API
+// Run executes wf's graph, starting from its trigger node, using authHeader for every oCIS API
 // call (WebDAV/Graph) and the executor's own configured LLM endpoint for every llm node.
 // resourcePath is the WebDAV path of the file this run operates on — optional for graphs
 // that don't reference {{file.*}} or perform file actions.
-func (e *Executor) Run(ctx context.Context, token string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord {
+func (e *Executor) Run(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord {
 	record := &model.ExecutionRecord{
 		ID:              uuid.NewString(),
 		WorkflowID:      wf.ID,
@@ -66,7 +66,7 @@ func (e *Executor) Run(ctx context.Context, token string, wf model.WorkflowDefin
 	vars := map[string]string{}
 	currentPath := resourcePath
 	if resourcePath != "" {
-		content, name, err := e.files.GetContent(ctx, token, resourcePath)
+		content, name, err := e.files.GetContent(ctx, authHeader, resourcePath)
 		if err != nil {
 			e.log.Warn("run: could not read target file, continuing without file context", "error", err)
 		} else {
@@ -88,7 +88,7 @@ func (e *Executor) Run(ctx context.Context, token string, wf model.WorkflowDefin
 		case "llm":
 			err = e.runLLM(ctx, node, vars, &result)
 		case "action":
-			currentPath, err = e.runAction(ctx, token, node, vars, currentPath, &result)
+			currentPath, err = e.runAction(ctx, authHeader, node, vars, currentPath, &result)
 		default:
 			err = fmt.Errorf("unknown node type %q", node.Type)
 		}
@@ -174,7 +174,7 @@ func (e *Executor) runLLM(ctx context.Context, node model.WorkflowNode, vars map
 	return nil
 }
 
-func (e *Executor) runAction(ctx context.Context, token string, node model.WorkflowNode, vars map[string]string, currentPath string, result *model.NodeResult) (string, error) {
+func (e *Executor) runAction(ctx context.Context, authHeader string, node model.WorkflowNode, vars map[string]string, currentPath string, result *model.NodeResult) (string, error) {
 	actionType, _ := node.Data["actionType"].(string)
 	params, _ := node.Data["actionParams"].(map[string]any)
 	param := func(key string) string {
@@ -191,11 +191,11 @@ func (e *Executor) runAction(ctx context.Context, token string, node model.Workf
 		if tag == "" || currentPath == "" {
 			return currentPath, fmt.Errorf("tag action needs both a target file and a tag value")
 		}
-		itemID, err := e.graph.ResolveItemID(ctx, token, currentPath)
+		itemID, err := e.graph.ResolveItemID(ctx, authHeader, currentPath)
 		if err != nil {
 			return currentPath, err
 		}
-		if err := e.graph.AssignTag(ctx, token, itemID, tag); err != nil {
+		if err := e.graph.AssignTag(ctx, authHeader, itemID, tag); err != nil {
 			return currentPath, err
 		}
 		result.Output = tag
@@ -206,7 +206,7 @@ func (e *Executor) runAction(ctx context.Context, token string, node model.Workf
 		if text == "" || currentPath == "" {
 			return currentPath, fmt.Errorf("comment action needs both a target file and comment text")
 		}
-		if err := e.files.Comment(ctx, token, currentPath, text); err != nil {
+		if err := e.files.Comment(ctx, authHeader, currentPath, text); err != nil {
 			return currentPath, err
 		}
 		result.Output = text
@@ -220,9 +220,9 @@ func (e *Executor) runAction(ctx context.Context, token string, node model.Workf
 		destPath := strings.TrimRight(dest, "/") + "/" + baseName(currentPath)
 		var err error
 		if actionType == "move" {
-			err = e.files.Move(ctx, token, currentPath, destPath)
+			err = e.files.Move(ctx, authHeader, currentPath, destPath)
 		} else {
-			err = e.files.Copy(ctx, token, currentPath, destPath)
+			err = e.files.Copy(ctx, authHeader, currentPath, destPath)
 		}
 		if err != nil {
 			return currentPath, err
@@ -239,7 +239,7 @@ func (e *Executor) runAction(ctx context.Context, token string, node model.Workf
 			return currentPath, fmt.Errorf("rename action needs both a target file and a new name")
 		}
 		destPath := dirName(currentPath) + "/" + newName
-		if err := e.files.Move(ctx, token, currentPath, destPath); err != nil {
+		if err := e.files.Move(ctx, authHeader, currentPath, destPath); err != nil {
 			return currentPath, err
 		}
 		result.Output = destPath
