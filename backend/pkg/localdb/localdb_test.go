@@ -1,6 +1,7 @@
 package localdb
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -99,6 +100,7 @@ func TestTriggerIndex(t *testing.T) {
 	}
 	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
 		WorkflowID: "wf-2", UserID: "user-1", TriggerType: "event", EventType: "upload",
+		PathPrefix: "/Invoices", Extension: ".pdf",
 	}); err != nil {
 		t.Fatalf("UpsertTriggerIndexEntry: %v", err)
 	}
@@ -118,6 +120,9 @@ func TestTriggerIndex(t *testing.T) {
 	if len(events) != 1 || events[0].WorkflowID != "wf-2" {
 		t.Fatalf("ListEventTriggers() = %+v", events)
 	}
+	if events[0].PathPrefix != "/Invoices" || events[0].Extension != ".pdf" {
+		t.Fatalf("ListEventTriggers() filters = %+v", events[0])
+	}
 
 	if err := db.DeleteTriggerIndexEntry(ctx, "wf-1"); err != nil {
 		t.Fatalf("DeleteTriggerIndexEntry: %v", err)
@@ -125,5 +130,53 @@ func TestTriggerIndex(t *testing.T) {
 	schedules, _ = db.ListScheduleTriggers(ctx)
 	if len(schedules) != 0 {
 		t.Fatalf("expected schedule trigger removed, got %+v", schedules)
+	}
+}
+
+// TestMigrateAddsColumnsToExistingTable regression-tests a real bug: CREATE TABLE IF NOT
+// EXISTS is a no-op against a trigger_index table that already exists from before
+// path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
+// every trigger_index query with "no such column: path_prefix".
+func TestMigrateAddsColumnsToExistingTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if _, err := raw.Exec(`
+		CREATE TABLE trigger_index (
+			workflow_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			trigger_type TEXT NOT NULL,
+			schedule TEXT NOT NULL DEFAULT '',
+			event_type TEXT NOT NULL DEFAULT ''
+		)
+	`); err != nil {
+		t.Fatalf("create old-shape table: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	db, err := Open(path, make([]byte, 32))
+	if err != nil {
+		t.Fatalf("Open on pre-existing old-shape database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := t.Context()
+	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
+		WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", PathPrefix: "/Invoices",
+	}); err != nil {
+		t.Fatalf("UpsertTriggerIndexEntry after migration: %v", err)
+	}
+
+	events, err := db.ListEventTriggers(ctx)
+	if err != nil {
+		t.Fatalf("ListEventTriggers after migration: %v", err)
+	}
+	if len(events) != 1 || events[0].PathPrefix != "/Invoices" {
+		t.Fatalf("ListEventTriggers() after migration = %+v", events)
 	}
 }

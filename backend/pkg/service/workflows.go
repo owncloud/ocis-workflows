@@ -72,6 +72,10 @@ func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader stri
 	}
 	if wf.Trigger.Type == "event" && wf.Trigger.Event != nil {
 		entry.EventType = wf.Trigger.Event.Type
+		if wf.Trigger.Event.Filters != nil {
+			entry.PathPrefix = wf.Trigger.Event.Filters.PathPrefix
+			entry.Extension = wf.Trigger.Event.Filters.Extension
+		}
 	}
 	if err := h.triggerIndex.UpsertTriggerIndexEntry(ctx, entry); err != nil {
 		h.log.Error("update trigger index entry", "workflowID", wf.ID, "error", err)

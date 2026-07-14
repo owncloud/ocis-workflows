@@ -13,6 +13,24 @@ import (
 	"github.com/owncloud/ocis-workflows/pkg/ocisclient"
 )
 
+func TestIsInternalPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/.workflows/definitions/wf-1.json", true},
+		{".workflows/executions/wf-1/exec-1.json", true},
+		{"/.workflows", true},
+		{"/Invoices/foo.pdf", false},
+		{"/.workflows-backup/foo.json", false}, // prefix collision, not the real folder
+	}
+	for _, c := range cases {
+		if got := IsInternalPath(c.path); got != c.want {
+			t.Errorf("IsInternalPath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
 // fakeOCIS is a minimal in-memory stand-in for oCIS's Graph "/me" endpoint and its WebDAV
 // files endpoint, just enough to exercise Store's request shapes end-to-end without a real
 // oCIS instance (that's what the e2e suite covers instead).

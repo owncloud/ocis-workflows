@@ -23,12 +23,17 @@ import (
 	debugserver "github.com/owncloud/ocis-workflows/pkg/server/debug"
 	httpserver "github.com/owncloud/ocis-workflows/pkg/server/http"
 	"github.com/owncloud/ocis-workflows/pkg/service"
+	"github.com/owncloud/ocis-workflows/pkg/sse"
 	"github.com/owncloud/ocis-workflows/pkg/webdavfile"
 	"github.com/owncloud/ocis-workflows/pkg/webdavstore"
 )
 
 // scheduleTickInterval controls how often the scheduler checks for due schedule triggers.
 const scheduleTickInterval = 10 * time.Second
+
+// sseReconcileInterval controls how often the SSE manager checks which users need an
+// active event-trigger consumer.
+const sseReconcileInterval = 30 * time.Second
 
 // RunServer starts the public API server, the debug server, and the background schedule
 // evaluator, and blocks until any of them exits or the process receives an interrupt/
@@ -72,6 +77,7 @@ func RunServer(cfg config.Config) error {
 	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: apiHandler}
 	debugSrv := &http.Server{Addr: cfg.DebugAddr, Handler: debugserver.New()}
 	sched := scheduler.New(db, store, graphExecutor, scheduleTickInterval, log)
+	sseManager := sse.New(db, store, ocisClient, graphExecutor, cfg.OCISURL, cfg.OCISInsecure, sseReconcileInterval, log)
 
 	g, gCtx := errgroup.WithContext(ctx)
 
@@ -94,6 +100,12 @@ func RunServer(cfg config.Config) error {
 	g.Go(func() error {
 		log.Info("starting schedule evaluator", "interval", scheduleTickInterval)
 		sched.Start(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		log.Info("starting sse event-trigger manager", "reconcileInterval", sseReconcileInterval)
+		sseManager.Start(gCtx)
 		return nil
 	})
 
