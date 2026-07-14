@@ -2,10 +2,24 @@
   <main class="oc-p workflows-list">
     <div class="workflows-list-header">
       <h1>{{ $gettext('Workflows') }}</h1>
-      <oc-button variation="primary" @click="createNew">
-        {{ $gettext('Add workflow') }}
-      </oc-button>
+      <div class="workflows-list-header-actions">
+        <span class="workflows-automation-status">
+          <span
+            class="workflows-status-pill"
+            :class="automationConnected ? 'is-active' : 'is-inactive'"
+          >
+            {{ automationConnected ? $gettext('Automation connected') : $gettext('Automation not connected') }}
+          </span>
+          <oc-button appearance="raw" :disabled="automationBusy" @click="toggleAutomation">
+            {{ automationConnected ? $gettext('Disconnect automation') : $gettext('Connect automation') }}
+          </oc-button>
+        </span>
+        <oc-button variation="primary" @click="createNew">
+          {{ $gettext('Add workflow') }}
+        </oc-button>
+      </div>
     </div>
+    <p v-if="automationError" class="oc-text-input-danger">{{ automationError }}</p>
 
     <p v-if="loadError" class="oc-text-input-danger">{{ loadError }}</p>
     <p v-else-if="loading">{{ $gettext('Loading workflows...') }}</p>
@@ -61,6 +75,9 @@ const api = useWorkflowsApi(appConfig.backendUrl)
 const workflows = ref<WorkflowDefinition[]>([])
 const loading = ref(true)
 const loadError = ref('')
+const automationConnected = ref(false)
+const automationBusy = ref(false)
+const automationError = ref('')
 
 const load = async () => {
   loading.value = true
@@ -71,6 +88,33 @@ const load = async () => {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+}
+
+const loadAutomationStatus = async () => {
+  try {
+    const status = await api.getAutomationStatus()
+    automationConnected.value = status.connected
+  } catch (e) {
+    automationError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+const toggleAutomation = async () => {
+  automationBusy.value = true
+  automationError.value = ''
+  try {
+    if (automationConnected.value) {
+      await api.disconnectAutomation()
+      automationConnected.value = false
+    } else {
+      const status = await api.connectAutomation()
+      automationConnected.value = status.connected
+    }
+  } catch (e) {
+    automationError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    automationBusy.value = false
   }
 }
 
@@ -85,7 +129,10 @@ const remove = async (id: string) => {
 
 const formatDate = (iso: string) => new Date(iso).toLocaleString()
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadAutomationStatus()
+})
 </script>
 
 <style scoped>
@@ -94,6 +141,16 @@ onMounted(load)
   align-items: center;
   justify-content: space-between;
   margin-bottom: 1.5rem;
+}
+.workflows-list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.workflows-automation-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .workflows-list-empty {
   opacity: 0.7;
