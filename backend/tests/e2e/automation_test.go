@@ -105,10 +105,12 @@ func TestScheduledWorkflowRunsInBackground(t *testing.T) {
 		res.Body.Close()
 	})
 
-	// The scheduler ticks every 10s (see command.scheduleTickInterval) — poll well past
-	// that, well short of the test's own timeout, for at least one background-triggered
-	// execution to show up.
-	deadline := time.Now().Add(25 * time.Second)
+	// The scheduler ticks every 10s (see command.scheduleTickInterval) — a workflow first
+	// seen on tick N is only *due* on tick N+1, and the SSE event-trigger manager's own
+	// reconcile/consumer goroutines share this process, so worst-case first-fire latency
+	// runs comfortably past 2 tick intervals under load. Poll well past that, well short of
+	// the test's own timeout.
+	deadline := time.Now().Add(45 * time.Second)
 	var found bool
 	for time.Now().Before(deadline) {
 		listRes := doRequest(t, http.MethodGet, "/me/workflows/"+workflow.ID+"/executions", nil, true)
@@ -131,6 +133,97 @@ func TestScheduledWorkflowRunsInBackground(t *testing.T) {
 	}
 
 	if !found {
-		t.Fatal("expected at least one successful schedule-triggered execution within 25s, found none")
+		t.Fatal("expected at least one successful schedule-triggered execution within 45s, found none")
+	}
+}
+
+// TestEventTriggeredWorkflowRunsOnUpload connects automation, creates a workflow with an
+// upload event trigger scoped to a path prefix and extension, uploads a matching file
+// through WebDAV, and waits for the SSE-driven consumer to fire it on its own — no
+// manual/scheduled trigger involved, exactly the flow verified live against a real oCIS
+// instance during development (see pkg/sse's package doc for the known coverage gap:
+// tag-added/tag-removed events aren't forwarded through SSE).
+func TestEventTriggeredWorkflowRunsOnUpload(t *testing.T) {
+	token := testToken(t)
+
+	connectRes := doRequest(t, http.MethodPost, "/me/automation", nil, true)
+	connectRes.Body.Close()
+	if connectRes.StatusCode != http.StatusOK {
+		t.Fatalf("connect automation: expected 200, got %d", connectRes.StatusCode)
+	}
+	t.Cleanup(func() {
+		res := doRequest(t, http.MethodDelete, "/me/automation", nil, true)
+		res.Body.Close()
+	})
+
+	newWorkflow := map[string]any{
+		"name":    "e2e event workflow",
+		"enabled": true,
+		"trigger": map[string]any{
+			"type": "event",
+			"event": map[string]any{
+				"type":    "upload",
+				"filters": map[string]string{"pathPrefix": "/e2e-sse-test", "extension": ".txt"},
+			},
+		},
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "trigger", "type": "trigger", "position": map[string]int{"x": 0, "y": 0}, "data": map[string]any{
+					"triggerType": "event", "eventType": "upload",
+				}},
+				{"id": "llm-1", "type": "llm", "position": map[string]int{"x": 200, "y": 0}, "data": map[string]any{
+					"prompt": "Say hi",
+				}},
+			},
+			"edges": []map[string]string{{"id": "e1", "source": "trigger", "target": "llm-1"}},
+		},
+	}
+
+	createRes := doRequest(t, http.MethodPost, "/me/workflows", newWorkflow, true)
+	if createRes.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createRes.Body)
+		t.Fatalf("create workflow: expected 201, got %d: %s", createRes.StatusCode, body)
+	}
+	workflow := decodeJSON[struct {
+		ID string `json:"id"`
+	}](t, createRes)
+	t.Cleanup(func() {
+		res := doRequest(t, http.MethodDelete, "/me/workflows/"+workflow.ID, nil, true)
+		res.Body.Close()
+	})
+
+	// The SSE manager reconciles which users need an active consumer every
+	// sseReconcileInterval (30s, see command.sseReconcileInterval) — give it time to open
+	// the stream before uploading, so the upload isn't missed by a connection that hasn't
+	// started yet.
+	time.Sleep(35 * time.Second)
+
+	mkdir(t, token, "/e2e-sse-test")
+	uploadFile(t, token, "/e2e-sse-test/hello.txt", "hello from the event-trigger e2e test")
+
+	deadline := time.Now().Add(30 * time.Second)
+	var found bool
+	for time.Now().Before(deadline) {
+		listRes := doRequest(t, http.MethodGet, "/me/workflows/"+workflow.ID+"/executions", nil, true)
+		list := decodeJSON[struct {
+			Value []struct {
+				TriggeredBy string `json:"triggeredBy"`
+				Status      string `json:"status"`
+			} `json:"value"`
+		}](t, listRes)
+
+		for _, exec := range list.Value {
+			if exec.TriggeredBy == "event" && exec.Status == "succeeded" {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	if !found {
+		t.Fatal("expected at least one successful event-triggered execution within 30s of upload, found none")
 	}
 }
