@@ -12,6 +12,8 @@ services:
       IDM_ADMIN_PASSWORD: admin
       IDM_CREATE_DEMO_USERS: true
       PROXY_ENABLE_BASIC_AUTH: true
+      PROXY_ENABLE_APP_AUTH: true
+      OCIS_ADD_RUN_SERVICES: auth-app
       PROXY_TLS: 'false'
       WEB_ASSET_APPS_PATH: /web/apps
     labels:
@@ -28,28 +30,6 @@ services:
     depends_on:
       - traefik
 
-  ai-llm-proxy:
-    build:
-      context: ${AI_LLM_PROXY_CONTEXT:-../web-extensions/packages/ai-llm-proxy}
-    extra_hosts:
-      - host.docker.internal:${DOCKER_HOST:-host-gateway}
-    environment:
-      OCIS_URL: https://host.docker.internal:9200
-      LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11434/v1}
-      LLM_MODEL: ${LLM_MODEL:-llama3.2}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      NODE_TLS_REJECT_UNAUTHORIZED: '0'
-    labels:
-      traefik.enable: true
-      traefik.http.routers.ai-llm-proxy.tls: true
-      traefik.http.routers.ai-llm-proxy.rule: Host(`host.docker.internal`) && PathPrefix(`/ai-llm-proxy`)
-      traefik.http.routers.ai-llm-proxy.entrypoints: ocis
-      traefik.http.services.ai-llm-proxy.loadbalancer.server.port: 3030
-      traefik.http.routers.ai-llm-proxy.middlewares: ai-llm-proxy-stripprefix,cors
-      traefik.http.middlewares.ai-llm-proxy-stripprefix.stripprefix.prefixes: /ai-llm-proxy
-    depends_on:
-      - traefik
-
   workflows-backend:
     build:
       context: ./backend
@@ -59,8 +39,12 @@ services:
     environment:
       WORKFLOWS_OCIS_URL: https://host.docker.internal:9200
       WORKFLOWS_OCIS_INSECURE: 'true'
-      WORKFLOWS_LLM_PROXY_URL: https://host.docker.internal:9200/ai-llm-proxy/v1
+      WORKFLOWS_LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11434/v1}
+      WORKFLOWS_LLM_MODEL: ${LLM_MODEL:-llama3.2}
+      WORKFLOWS_LLM_API_KEY: ${LLM_API_KEY:-}
       WORKFLOWS_HTTP_ADDR: 0.0.0.0:9105
+      WORKFLOWS_DEBUG_ADDR: 0.0.0.0:9109
+      WORKFLOWS_ALLOWED_ORIGIN: https://host.docker.internal:9200
       WORKFLOWS_DB_PATH: /data/workflows.db
     volumes:
       - workflows-data:/data
@@ -70,7 +54,8 @@ services:
       traefik.http.routers.workflows-backend.rule: Host(`host.docker.internal`) && PathPrefix(`/workflows/api`)
       traefik.http.routers.workflows-backend.entrypoints: ocis
       traefik.http.services.workflows-backend.loadbalancer.server.port: 9105
-      traefik.http.routers.workflows-backend.middlewares: cors
+      traefik.http.routers.workflows-backend.middlewares: workflows-backend-stripprefix,cors
+      traefik.http.middlewares.workflows-backend-stripprefix.stripprefix.prefixes: /workflows
     depends_on:
       - traefik
 
