@@ -1,15 +1,27 @@
 <template>
-  <div class="workflows-node workflows-node-llm">
+  <div
+    class="workflows-node-card workflows-node-llm"
+    role="button"
+    tabindex="0"
+    @click="$emit('configure')"
+    @keydown.enter="$emit('configure')"
+    @keydown.space.prevent="$emit('configure')"
+  >
     <Handle type="target" :position="Position.Left" />
-    <label :for="`${props.id}-prompt`" class="workflows-node-title">{{ $gettext('LLM prompt') }}</label>
-    <textarea
-      :id="`${props.id}-prompt`"
-      v-model="promptModel"
-      class="workflows-node-prompt"
-      rows="3"
-      :placeholder="$gettext('Summarize {{file.content}}...')"
-    />
+    <oc-icon name="chat-3-line" />
+    <div class="workflows-node-card-text">
+      <span class="workflows-node-card-title">{{ $gettext('LLM Prompt') }}</span>
+      <span class="workflows-node-card-subtitle">{{ subtitle }}</span>
+    </div>
     <Handle type="source" :position="Position.Right" />
+    <button
+      type="button"
+      class="workflows-node-add-button"
+      :aria-label="$gettext('Add next step')"
+      @click.stop="$emit('add-next')"
+    >
+      +
+    </button>
   </div>
 </template>
 
@@ -20,11 +32,8 @@ import { useGettext } from 'vue3-gettext'
 import type { WorkflowNodeData } from '../../types/workflow'
 
 const props = defineProps<{ id: string; data: WorkflowNodeData }>()
-const emit = defineEmits<{ (e: 'update', data: WorkflowNodeData): void }>()
+defineEmits<{ (e: 'configure'): void; (e: 'add-next'): void }>()
 const { $gettext } = useGettext()
 
-const promptModel = computed({
-  get: () => props.data.prompt ?? '',
-  set: (value: string) => emit('update', { ...props.data, prompt: value })
-})
+const subtitle = computed(() => props.data.prompt || $gettext('No prompt set'))
 </script>

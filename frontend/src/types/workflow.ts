@@ -19,6 +19,17 @@ export interface WorkflowTrigger {
 
 export interface WorkflowNodeData {
   label?: string
+  // trigger node
+  triggerType?: TriggerType
+  schedule?: string
+  event?: {
+    type: EventTriggerType
+    filters?: {
+      pathPrefix?: string
+      extension?: string
+      spaceId?: string
+    }
+  }
   // llm node
   prompt?: string
   model?: string
