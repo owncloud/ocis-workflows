@@ -21,6 +21,32 @@ func davClient() *http.Client {
 	}
 }
 
+func mkdir(t *testing.T, token, davPath string) {
+	t.Helper()
+	req, err := http.NewRequest("MKCOL", ocisURL+"/remote.php/dav/files/admin"+davPath, nil)
+	if err != nil {
+		t.Fatalf("build mkcol request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	res, err := davClient().Do(req)
+	if err != nil {
+		t.Fatalf("mkcol %s: %v", davPath, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("mkcol %s: expected 201, got %d", davPath, res.StatusCode)
+	}
+	t.Cleanup(func() {
+		req, _ := http.NewRequest(http.MethodDelete, ocisURL+"/remote.php/dav/files/admin"+davPath, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := davClient().Do(req)
+		if err == nil {
+			res.Body.Close()
+		}
+	})
+}
+
 func uploadFile(t *testing.T, token, davPath, content string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPut, ocisURL+"/remote.php/dav/files/admin"+davPath, strings.NewReader(content))
