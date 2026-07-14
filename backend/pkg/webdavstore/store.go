@@ -30,6 +30,16 @@ const rootDir = ".workflows"
 const definitionsDir = "definitions"
 const executionsDir = "executions"
 
+// IsInternalPath reports whether davPath falls under this sidecar's own bookkeeping folder
+// (workflow definitions, execution history). Event triggers must exclude it: without this
+// check, this backend's own writes there are indistinguishable from user uploads over SSE,
+// and an event trigger with no path filter would re-trigger itself on every execution it
+// records — a self-sustaining feedback loop.
+func IsInternalPath(davPath string) bool {
+	trimmed := strings.TrimPrefix(davPath, "/")
+	return trimmed == rootDir || strings.HasPrefix(trimmed, rootDir+"/")
+}
+
 // Store reads and writes WorkflowDefinition JSON files via WebDAV.
 type Store struct {
 	ocisURL    string

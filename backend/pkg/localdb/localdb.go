@@ -36,6 +36,8 @@ type TriggerIndexEntry struct {
 	TriggerType string // schedule | event
 	Schedule    string
 	EventType   string
+	PathPrefix  string // event trigger filter, mirrors model.EventFilters
+	Extension   string // event trigger filter, mirrors model.EventFilters
 }
 
 // DB is the sidecar's local SQLite-backed store.
@@ -71,7 +73,7 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) migrate() error {
-	_, err := db.sql.Exec(`
+	if _, err := db.sql.Exec(`
 		CREATE TABLE IF NOT EXISTS automations (
 			user_id TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
@@ -86,7 +88,44 @@ func (db *DB) migrate() error {
 			schedule TEXT NOT NULL DEFAULT '',
 			event_type TEXT NOT NULL DEFAULT ''
 		);
-	`)
+	`); err != nil {
+		return err
+	}
+
+	// CREATE TABLE IF NOT EXISTS only handles brand-new databases — a trigger_index table
+	// created before path_prefix/extension existed needs these added explicitly.
+	for _, col := range []string{"path_prefix", "extension"} {
+		if err := db.addColumnIfMissing("trigger_index", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *DB) addColumnIfMissing(table, column, definition string) error {
+	rows, err := db.sql.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltValue any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
 	return err
 }
 
@@ -141,7 +180,7 @@ func (db *DB) DeleteAutomation(ctx context.Context, userID string) error {
 }
 
 // ListAutomations returns every stored automation credential (used by the cron scheduler
-// and, in a future milestone, the SSE consumer manager).
+// and the SSE consumer manager).
 func (db *DB) ListAutomations(ctx context.Context) ([]Automation, error) {
 	rows, err := db.sql.QueryContext(ctx, `
 		SELECT user_id, username, encrypted_app_password, expires_at, connected_at FROM automations
@@ -174,14 +213,16 @@ func (db *DB) ListAutomations(ctx context.Context) ([]Automation, error) {
 // whenever a workflow with a schedule/event trigger is created or updated.
 func (db *DB) UpsertTriggerIndexEntry(ctx context.Context, e TriggerIndexEntry) error {
 	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workflow_id) DO UPDATE SET
 			user_id = excluded.user_id,
 			trigger_type = excluded.trigger_type,
 			schedule = excluded.schedule,
-			event_type = excluded.event_type
-	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType)
+			event_type = excluded.event_type,
+			path_prefix = excluded.path_prefix,
+			extension = excluded.extension
+	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType, e.PathPrefix, e.Extension)
 	return err
 }
 
@@ -204,7 +245,7 @@ func (db *DB) ListEventTriggers(ctx context.Context) ([]TriggerIndexEntry, error
 
 func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIndexEntry, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT workflow_id, user_id, trigger_type, schedule, event_type
+		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension
 		FROM trigger_index WHERE trigger_type = ?
 	`, triggerType)
 	if err != nil {
@@ -215,7 +256,7 @@ func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIn
 	var out []TriggerIndexEntry
 	for rows.Next() {
 		var e TriggerIndexEntry
-		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType); err != nil {
+		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
