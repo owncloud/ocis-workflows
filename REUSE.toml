@@ -1,0 +1,9 @@
+version = 1
+SPDX-PackageName = "ocis-workflows"
+SPDX-PackageSupplier = "Lukas Hirt <info@hirt.cz>"
+SPDX-PackageDownloadLocation = "https://github.com/LukasHirt/ocis-workflows"
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Lukas Hirt"
+SPDX-License-Identifier = "Apache-2.0"
