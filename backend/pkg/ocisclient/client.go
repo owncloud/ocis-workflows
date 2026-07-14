@@ -19,6 +19,12 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// HTTPClient exposes the underlying *http.Client for packages (e.g. webdavstore) that need
+// to make their own authenticated calls against the same oCIS instance.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
 // New builds a Client for the given oCIS base URL.
 func New(ocisURL string, insecure bool) *Client {
 	transport := &http.Transport{}

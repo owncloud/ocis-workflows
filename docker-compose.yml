@@ -34,13 +34,19 @@ services:
     build:
       context: ./backend
       dockerfile: ../docker/Dockerfile
+      args:
+        CMD_PATH: ./cmd/workflows
+    command: ['server']
     extra_hosts:
       - host.docker.internal:${DOCKER_HOST:-host-gateway}
     environment:
       WORKFLOWS_OCIS_URL: https://host.docker.internal:9200
       WORKFLOWS_OCIS_INSECURE: 'true'
-      WORKFLOWS_LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11434/v1}
-      WORKFLOWS_LLM_MODEL: ${LLM_MODEL:-llama3.2}
+      # Defaults to the fake-llm fixture below, so the stack (and its e2e tests) never
+      # depend on a real LLM provider being reachable. Set LLM_ENDPOINT/LLM_MODEL/
+      # LLM_API_KEY to point at a real one (e.g. Ollama on the host, or a hosted API).
+      WORKFLOWS_LLM_ENDPOINT: ${LLM_ENDPOINT:-http://fake-llm:8080/v1}
+      WORKFLOWS_LLM_MODEL: ${LLM_MODEL:-fake-model}
       WORKFLOWS_LLM_API_KEY: ${LLM_API_KEY:-}
       WORKFLOWS_HTTP_ADDR: 0.0.0.0:9105
       WORKFLOWS_DEBUG_ADDR: 0.0.0.0:9109
@@ -58,6 +64,14 @@ services:
       traefik.http.middlewares.workflows-backend-stripprefix.stripprefix.prefixes: /workflows
     depends_on:
       - traefik
+      - fake-llm
+
+  fake-llm:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile
+      args:
+        CMD_PATH: ./cmd/fakellm
 
   traefik:
     image: traefik:v3.6.10

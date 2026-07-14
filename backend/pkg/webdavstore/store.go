@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ var ErrNotFound = errors.New("not found")
 
 const rootDir = ".workflows"
 const definitionsDir = "definitions"
+const executionsDir = "executions"
 
 // Store reads and writes WorkflowDefinition JSON files via WebDAV.
 type Store struct {
@@ -86,6 +88,118 @@ func (s *Store) mkcol(ctx context.Context, token, url string) error {
 
 func (s *Store) definitionPath(userID, id string) string {
 	return fmt.Sprintf("%s/%s/%s/%s.json", s.davBase(userID), rootDir, definitionsDir, id)
+}
+
+func (s *Store) executionsDirURL(userID, workflowID string) string {
+	return fmt.Sprintf("%s/%s/%s/%s", s.davBase(userID), rootDir, executionsDir, workflowID)
+}
+
+func (s *Store) executionPath(userID, workflowID, execID string) string {
+	return fmt.Sprintf("%s/%s.json", s.executionsDirURL(userID, workflowID), execID)
+}
+
+// PutExecution creates or overwrites an execution record.
+func (s *Store) PutExecution(ctx context.Context, token string, rec model.ExecutionRecord) error {
+	userID, err := s.ocisClient.Me(ctx, token)
+	if err != nil {
+		return fmt.Errorf("resolve current user: %w", err)
+	}
+	base := s.davBase(userID)
+	for _, segment := range []string{rootDir, rootDir + "/" + executionsDir, rootDir + "/" + executionsDir + "/" + rec.WorkflowID} {
+		if err := s.mkcol(ctx, token, base+"/"+segment); err != nil {
+			return fmt.Errorf("ensure execution storage folders: %w", err)
+		}
+	}
+
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, s.executionPath(userID, rec.WorkflowID, rec.ID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusCreated && res.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("PUT execution record returned status %d", res.StatusCode)
+	}
+	return nil
+}
+
+// GetExecution returns a single execution record.
+func (s *Store) GetExecution(ctx context.Context, token, workflowID, execID string) (*model.ExecutionRecord, error) {
+	userID, err := s.ocisClient.Me(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("resolve current user: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.executionPath(userID, workflowID, execID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET execution record returned status %d", res.StatusCode)
+	}
+
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	var rec model.ExecutionRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("decode stored execution record: %w", err)
+	}
+	return &rec, nil
+}
+
+// ListExecutions returns every execution record for a workflow, most recent first.
+func (s *Store) ListExecutions(ctx context.Context, token, workflowID string) ([]model.ExecutionRecord, error) {
+	userID, err := s.ocisClient.Me(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("resolve current user: %w", err)
+	}
+
+	names, err := s.propfindJSONNames(ctx, token, s.executionsDirURL(userID, workflowID))
+	if err != nil {
+		// The executions folder for this workflow may not exist yet — that's an empty
+		// history, not an error.
+		return []model.ExecutionRecord{}, nil //nolint:nilerr // see comment above
+	}
+
+	records := make([]model.ExecutionRecord, 0, len(names))
+	for _, name := range names {
+		id := strings.TrimSuffix(name, ".json")
+		rec, err := s.GetExecution(ctx, token, workflowID, id)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		records = append(records, *rec)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].StartedDateTime > records[j].StartedDateTime })
+	return records, nil
 }
 
 // List returns every workflow definition stored in the caller's space.

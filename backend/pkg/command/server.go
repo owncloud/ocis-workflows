@@ -12,11 +12,14 @@ import (
 
 	"github.com/LukasHirt/ocis-workflows/pkg/auth"
 	"github.com/LukasHirt/ocis-workflows/pkg/config"
+	"github.com/LukasHirt/ocis-workflows/pkg/executor"
+	"github.com/LukasHirt/ocis-workflows/pkg/llm"
 	"github.com/LukasHirt/ocis-workflows/pkg/logging"
 	"github.com/LukasHirt/ocis-workflows/pkg/ocisclient"
 	debugserver "github.com/LukasHirt/ocis-workflows/pkg/server/debug"
 	httpserver "github.com/LukasHirt/ocis-workflows/pkg/server/http"
 	"github.com/LukasHirt/ocis-workflows/pkg/service"
+	"github.com/LukasHirt/ocis-workflows/pkg/webdavfile"
 	"github.com/LukasHirt/ocis-workflows/pkg/webdavstore"
 )
 
@@ -30,7 +33,10 @@ func RunServer(cfg config.Config) error {
 
 	ocisClient := ocisclient.New(cfg.OCISURL, cfg.OCISInsecure)
 	store := webdavstore.New(cfg.OCISURL, ocisClient, cfg.OCISInsecure)
-	workflowsHandler := service.NewWorkflowsHandler(store, log)
+	files := webdavfile.New(cfg.OCISURL, ocisClient, cfg.OCISInsecure)
+	llmClient := llm.New(cfg.LLMEndpoint, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMMaxTokens)
+	graphExecutor := executor.New(llmClient, files, ocisClient, log)
+	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, log)
 	validator := auth.NewValidator(cfg.OCISURL, cfg.AllowedOrigin, cfg.OCISInsecure)
 
 	apiHandler := httpserver.New(httpserver.Options{
