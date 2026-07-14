@@ -3,27 +3,46 @@
     <div class="workflows-list-header">
       <h1>{{ $gettext('Workflows') }}</h1>
       <oc-button variation="primary" @click="createNew">
-        {{ $gettext('New workflow') }}
+        {{ $gettext('Add workflow') }}
       </oc-button>
     </div>
 
     <p v-if="loadError" class="oc-text-input-danger">{{ loadError }}</p>
     <p v-else-if="loading">{{ $gettext('Loading workflows...') }}</p>
-    <p v-else-if="!workflows.length">
-      {{ $gettext('No workflows yet. Create one to get started.') }}
+    <p v-else-if="!workflows.length" class="workflows-list-empty">
+      {{ $gettext('No workflows yet. Add one to get started.') }}
     </p>
 
-    <ul v-else class="workflows-list-items">
-      <li v-for="workflow in workflows" :key="workflow.id" class="workflows-list-item">
-        <a :href="builderPath(workflow.id)">{{ workflow.name }}</a>
-        <span class="workflows-list-item-meta">
-          {{ workflow.trigger.type }} · {{ workflow.enabled ? $gettext('enabled') : $gettext('disabled') }}
-        </span>
-        <oc-button appearance="raw" @click="remove(workflow.id)">
-          {{ $gettext('Delete') }}
-        </oc-button>
-      </li>
-    </ul>
+    <table v-else class="workflows-list-table">
+      <thead>
+        <tr>
+          <th>{{ $gettext('Name') }}</th>
+          <th>{{ $gettext('Trigger') }}</th>
+          <th>{{ $gettext('Status') }}</th>
+          <th>{{ $gettext('Last updated') }}</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="workflow in workflows" :key="workflow.id">
+          <td>
+            <a :href="builderPath(workflow.id)">{{ workflow.name }}</a>
+          </td>
+          <td>{{ workflow.trigger.type }}</td>
+          <td>
+            <span class="workflows-status-pill" :class="workflow.enabled ? 'is-active' : 'is-inactive'">
+              {{ workflow.enabled ? $gettext('Active') : $gettext('Inactive') }}
+            </span>
+          </td>
+          <td>{{ formatDate(workflow.lastModifiedDateTime) }}</td>
+          <td>
+            <oc-button appearance="raw" @click="remove(workflow.id)">
+              {{ $gettext('Delete') }}
+            </oc-button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </main>
 </template>
 
@@ -64,5 +83,50 @@ const remove = async (id: string) => {
   await load()
 }
 
+const formatDate = (iso: string) => new Date(iso).toLocaleString()
+
 onMounted(load)
 </script>
+
+<style scoped>
+.workflows-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+.workflows-list-empty {
+  opacity: 0.7;
+}
+.workflows-list-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.workflows-list-table th {
+  text-align: left;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  opacity: 0.6;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--oc-color-border, #ddd);
+}
+.workflows-list-table td {
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--oc-color-border, #eee);
+}
+.workflows-status-pill {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.workflows-status-pill.is-active {
+  background: #e3f5e9;
+  color: #1a7f37;
+}
+.workflows-status-pill.is-inactive {
+  background: #f0f0f0;
+  color: #666;
+}
+</style>

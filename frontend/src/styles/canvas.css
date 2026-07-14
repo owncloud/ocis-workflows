@@ -1,0 +1,58 @@
+/* Shared, unscoped so the three node components (each its own SFC) render identically. */
+
+.workflows-node-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 180px;
+  padding: 0.6rem 0.8rem;
+  background: var(--oc-color-swatch-brand-contrastText, #fff);
+  border: 2px solid var(--oc-color-border, #ccc);
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+}
+.workflows-node-card:hover {
+  border-color: var(--oc-color-swatch-brand-default, #4a90d9);
+}
+.workflows-node-trigger {
+  border-radius: 24px 8px 8px 24px;
+}
+.workflows-node-card-text {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workflows-node-card-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workflows-node-card-subtitle {
+  font-size: 0.75rem;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.workflows-node-add-button {
+  position: absolute;
+  right: -28px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--oc-color-border, #ccc);
+  background: var(--oc-color-swatch-brand-contrastText, #fff);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 1rem;
+  z-index: 5;
+}
+.workflows-node-add-button:hover {
+  background: var(--oc-color-swatch-brand-default, #4a90d9);
+  color: #fff;
+}
