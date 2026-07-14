@@ -20,6 +20,7 @@ type Options struct {
 	AllowedOrigin string
 	Validator     *auth.Validator
 	Workflows     *service.WorkflowsHandler
+	Automation    *service.AutomationHandler
 	Logger        *slog.Logger
 }
 
@@ -57,6 +58,12 @@ func New(opts Options) http.Handler {
 					r.Get("/{execId}", opts.Workflows.GetExecution)
 				})
 			})
+		})
+
+		r.Route("/me/automation", func(r chi.Router) {
+			r.Get("/", opts.Automation.Get)
+			r.Post("/", opts.Automation.Connect)
+			r.Delete("/", opts.Automation.Disconnect)
 		})
 	})
 

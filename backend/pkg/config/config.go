@@ -4,6 +4,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,8 +37,15 @@ type Config struct {
 	LLMMaxTokens int
 	// DBPath is where the sidecar's own local operational database lives.
 	DBPath string
+	// EncryptionKey (32 bytes) encrypts app-passwords at rest in the local database. If
+	// unset, a random key is generated at startup — automation still works, but stored
+	// app-passwords become undecryptable across a restart. Set this in any deployment
+	// where automation (scheduled/event triggers) needs to survive a restart.
+	EncryptionKey []byte
 	// LogLevel controls slog verbosity: debug, info, warn, error.
 	LogLevel string
+
+	encryptionKeyGenerated bool
 }
 
 // FromEnv loads a Config from environment variables, applying sensible dev defaults for
@@ -63,7 +72,39 @@ func FromEnv() (Config, error) {
 		cfg.AllowedOrigin = cfg.OCISURL
 	}
 
+	key, generated, err := loadOrGenerateEncryptionKey()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.EncryptionKey = key
+	cfg.encryptionKeyGenerated = generated
+
 	return cfg, nil
+}
+
+// EncryptionKeyGenerated reports whether EncryptionKey was randomly generated (as opposed
+// to loaded from WORKFLOWS_ENCRYPTION_KEY) — callers should log a warning in that case.
+func (c Config) EncryptionKeyGenerated() bool {
+	return c.encryptionKeyGenerated
+}
+
+func loadOrGenerateEncryptionKey() (key []byte, generated bool, err error) {
+	if encoded := os.Getenv("WORKFLOWS_ENCRYPTION_KEY"); encoded != "" {
+		key, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, false, fmt.Errorf("WORKFLOWS_ENCRYPTION_KEY is not valid base64: %w", err)
+		}
+		if len(key) != 32 {
+			return nil, false, fmt.Errorf("WORKFLOWS_ENCRYPTION_KEY must decode to 32 bytes, got %d", len(key))
+		}
+		return key, false, nil
+	}
+
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, false, fmt.Errorf("generate encryption key: %w", err)
+	}
+	return key, true, nil
 }
 
 func getEnv(key, fallback string) string {

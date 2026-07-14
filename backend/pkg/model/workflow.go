@@ -103,6 +103,13 @@ type ErrorDetail struct {
 	Message string `json:"message"`
 }
 
+// AutomationStatus is a Graph-style singleton resource (like /me/mailboxSettings)
+// describing whether a user has enabled scheduled/event-triggered automation.
+type AutomationStatus struct {
+	Connected          bool   `json:"connected"`
+	ExpirationDateTime string `json:"expirationDateTime,omitempty"`
+}
+
 // Collection wraps a list response in Graph's "value" envelope.
 type Collection[T any] struct {
 	Value []T `json:"value"`
