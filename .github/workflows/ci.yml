@@ -4,10 +4,18 @@ on:
   push:
     branches:
       - main
-      - stable-*
   pull_request:
 
 jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: REUSE compliance check
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
   commitlint:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -51,6 +59,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Check dependency licenses
+        run: node scripts/check-licenses.mjs
 
       - name: Lint
         run: pnpm lint
