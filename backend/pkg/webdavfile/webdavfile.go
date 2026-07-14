@@ -45,8 +45,8 @@ func (c *Client) davURL(userID, davPath string) string {
 }
 
 // GetContent reads a file's content, and returns its base name.
-func (c *Client) GetContent(ctx context.Context, token, davPath string) (content []byte, name string, err error) {
-	userID, err := c.ocisClient.Me(ctx, token)
+func (c *Client) GetContent(ctx context.Context, authHeader, davPath string) (content []byte, name string, err error) {
+	userID, err := c.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve current user: %w", err)
 	}
@@ -55,7 +55,7 @@ func (c *Client) GetContent(ctx context.Context, token, davPath string) (content
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -75,17 +75,17 @@ func (c *Client) GetContent(ctx context.Context, token, davPath string) (content
 }
 
 // Move moves/renames a file from davPath to destDavPath.
-func (c *Client) Move(ctx context.Context, token, davPath, destDavPath string) error {
-	return c.copyOrMove(ctx, "MOVE", token, davPath, destDavPath)
+func (c *Client) Move(ctx context.Context, authHeader, davPath, destDavPath string) error {
+	return c.copyOrMove(ctx, "MOVE", authHeader, davPath, destDavPath)
 }
 
 // Copy copies a file from davPath to destDavPath.
-func (c *Client) Copy(ctx context.Context, token, davPath, destDavPath string) error {
-	return c.copyOrMove(ctx, "COPY", token, davPath, destDavPath)
+func (c *Client) Copy(ctx context.Context, authHeader, davPath, destDavPath string) error {
+	return c.copyOrMove(ctx, "COPY", authHeader, davPath, destDavPath)
 }
 
-func (c *Client) copyOrMove(ctx context.Context, method, token, davPath, destDavPath string) error {
-	userID, err := c.ocisClient.Me(ctx, token)
+func (c *Client) copyOrMove(ctx context.Context, method, authHeader, davPath, destDavPath string) error {
+	userID, err := c.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return fmt.Errorf("resolve current user: %w", err)
 	}
@@ -94,7 +94,7 @@ func (c *Client) copyOrMove(ctx context.Context, method, token, davPath, destDav
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Destination", c.davURL(userID, destDavPath))
 	req.Header.Set("Overwrite", "F")
 
@@ -116,23 +116,23 @@ func (c *Client) copyOrMove(ctx context.Context, method, token, davPath, destDav
 // so this is implemented as a JSON sidecar list stored alongside our own workflow data
 // under .workflows/comments/ in the caller's space — real and retrievable, but not
 // visible in oCIS Web's own UI. Documented limitation, not a stub.
-func (c *Client) Comment(ctx context.Context, token, davPath, text string) error {
-	userID, err := c.ocisClient.Me(ctx, token)
+func (c *Client) Comment(ctx context.Context, authHeader, davPath, text string) error {
+	userID, err := c.ocisClient.Me(ctx, authHeader)
 	if err != nil {
 		return fmt.Errorf("resolve current user: %w", err)
 	}
 
-	if err := c.mkcol(ctx, token, userID, ".workflows"); err != nil {
+	if err := c.mkcol(ctx, authHeader, userID, ".workflows"); err != nil {
 		return err
 	}
-	if err := c.mkcol(ctx, token, userID, ".workflows/comments"); err != nil {
+	if err := c.mkcol(ctx, authHeader, userID, ".workflows/comments"); err != nil {
 		return err
 	}
 
 	sidecarPath := ".workflows/comments/" + base64.RawURLEncoding.EncodeToString([]byte(davPath)) + ".json"
 
 	var comments []string
-	if existing, _, err := c.GetContent(ctx, token, sidecarPath); err == nil {
+	if existing, _, err := c.GetContent(ctx, authHeader, sidecarPath); err == nil {
 		_ = json.Unmarshal(existing, &comments)
 	}
 	comments = append(comments, text)
@@ -146,7 +146,7 @@ func (c *Client) Comment(ctx context.Context, token, davPath, text string) error
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := c.httpClient.Do(req)
@@ -161,12 +161,12 @@ func (c *Client) Comment(ctx context.Context, token, davPath, text string) error
 	return nil
 }
 
-func (c *Client) mkcol(ctx context.Context, token, userID, davPath string) error {
+func (c *Client) mkcol(ctx context.Context, authHeader, userID, davPath string) error {
 	req, err := http.NewRequestWithContext(ctx, "MKCOL", c.davURL(userID, davPath), nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {

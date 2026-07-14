@@ -17,8 +17,8 @@ import (
 // Graph tags API expects. There is no path-based lookup in the Graph API itself — this
 // works by PROPFIND-ing the file's oc:fileid WebDAV property, which is already returned in
 // exactly that compound format.
-func (c *Client) ResolveItemID(ctx context.Context, token, davPath string) (string, error) {
-	userID, err := c.Me(ctx, token)
+func (c *Client) ResolveItemID(ctx context.Context, authHeader, davPath string) (string, error) {
+	userID, err := c.Me(ctx, authHeader)
 	if err != nil {
 		return "", fmt.Errorf("resolve current user: %w", err)
 	}
@@ -32,7 +32,7 @@ func (c *Client) ResolveItemID(ctx context.Context, token, davPath string) (stri
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/xml")
 	req.Header.Set("Depth", "0")
 
@@ -75,7 +75,7 @@ type tagAssignment struct {
 }
 
 // AssignTag adds a tag to the given resource via the Graph tags extension.
-func (c *Client) AssignTag(ctx context.Context, token, itemID, tag string) error {
+func (c *Client) AssignTag(ctx context.Context, authHeader, itemID, tag string) error {
 	body, err := json.Marshal(tagAssignment{ResourceID: itemID, Tags: []string{tag}})
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func (c *Client) AssignTag(ctx context.Context, token, itemID, tag string) error
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := c.httpClient.Do(req)

@@ -45,7 +45,7 @@ func (h *WorkflowsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflows, err := h.store.List(r.Context(), token)
+	workflows, err := h.store.List(r.Context(), "Bearer "+token)
 	if err != nil {
 		h.log.Error("list workflows", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not list workflows")
@@ -93,7 +93,7 @@ func (h *WorkflowsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		wf.Graph = *patch.Graph
 	}
 
-	if err := h.store.Put(r.Context(), token, wf); err != nil {
+	if err := h.store.Put(r.Context(), "Bearer "+token, wf); err != nil {
 		h.log.Error("create workflow", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not create workflow")
 		return
@@ -111,7 +111,7 @@ func (h *WorkflowsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	wf, err := h.store.Get(r.Context(), token, id)
+	wf, err := h.store.Get(r.Context(), "Bearer "+token, id)
 	if err != nil {
 		if errors.Is(err, webdavstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "workflowNotFound", "the requested workflow was not found")
@@ -134,7 +134,7 @@ func (h *WorkflowsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	existing, err := h.store.Get(r.Context(), token, id)
+	existing, err := h.store.Get(r.Context(), "Bearer "+token, id)
 	if err != nil {
 		if errors.Is(err, webdavstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "workflowNotFound", "the requested workflow was not found")
@@ -168,7 +168,7 @@ func (h *WorkflowsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.LastModifiedDateTime = h.now().UTC().Format(time.RFC3339Nano)
 
-	if err := h.store.Put(r.Context(), token, *existing); err != nil {
+	if err := h.store.Put(r.Context(), "Bearer "+token, *existing); err != nil {
 		h.log.Error("patch workflow", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not update workflow")
 		return
@@ -186,7 +186,7 @@ func (h *WorkflowsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.store.Delete(r.Context(), token, id); err != nil {
+	if err := h.store.Delete(r.Context(), "Bearer "+token, id); err != nil {
 		if errors.Is(err, webdavstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "workflowNotFound", "the requested workflow was not found")
 			return
@@ -214,7 +214,7 @@ func (h *WorkflowsHandler) Run(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	wf, err := h.store.Get(r.Context(), token, id)
+	wf, err := h.store.Get(r.Context(), "Bearer "+token, id)
 	if err != nil {
 		if errors.Is(err, webdavstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "workflowNotFound", "the requested workflow was not found")
@@ -233,9 +233,9 @@ func (h *WorkflowsHandler) Run(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	record := h.executor.Run(r.Context(), token, *wf, "manual", req.ResourcePath)
+	record := h.executor.Run(r.Context(), "Bearer "+token, *wf, "manual", req.ResourcePath)
 
-	if err := h.store.PutExecution(r.Context(), token, *record); err != nil {
+	if err := h.store.PutExecution(r.Context(), "Bearer "+token, *record); err != nil {
 		h.log.Error("run workflow: store execution record", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "workflow ran but the execution record could not be saved")
 		return
@@ -254,7 +254,7 @@ func (h *WorkflowsHandler) ListExecutions(w http.ResponseWriter, r *http.Request
 	}
 
 	id := chi.URLParam(r, "id")
-	executions, err := h.store.ListExecutions(r.Context(), token, id)
+	executions, err := h.store.ListExecutions(r.Context(), "Bearer "+token, id)
 	if err != nil {
 		h.log.Error("list executions", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not list executions")
@@ -274,7 +274,7 @@ func (h *WorkflowsHandler) GetExecution(w http.ResponseWriter, r *http.Request) 
 
 	id := chi.URLParam(r, "id")
 	execID := chi.URLParam(r, "execId")
-	record, err := h.store.GetExecution(r.Context(), token, id, execID)
+	record, err := h.store.GetExecution(r.Context(), "Bearer "+token, id, execID)
 	if err != nil {
 		if errors.Is(err, webdavstore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "executionNotFound", "the requested execution was not found")
