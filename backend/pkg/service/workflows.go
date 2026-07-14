@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/owncloud/ocis-workflows/pkg/auth"
+	"github.com/owncloud/ocis-workflows/pkg/localdb"
 	"github.com/owncloud/ocis-workflows/pkg/model"
 	"github.com/owncloud/ocis-workflows/pkg/webdavstore"
 )
@@ -24,17 +25,57 @@ type Executor interface {
 	Run(ctx context.Context, token string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord
 }
 
+// TriggerIndexer keeps the sidecar's local schedule/event trigger index (see localdb) in
+// sync with workflow definitions, so the cron scheduler and SSE consumer manager don't need
+// to scan every user's WebDAV space on every tick.
+type TriggerIndexer interface {
+	UpsertTriggerIndexEntry(ctx context.Context, e localdb.TriggerIndexEntry) error
+	DeleteTriggerIndexEntry(ctx context.Context, workflowID string) error
+}
+
 // WorkflowsHandler implements the /me/workflows Graph-shaped REST API.
 type WorkflowsHandler struct {
-	store    *webdavstore.Store
-	executor Executor
-	log      *slog.Logger
-	now      func() time.Time
+	store        *webdavstore.Store
+	executor     Executor
+	users        UserResolver
+	triggerIndex TriggerIndexer
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // NewWorkflowsHandler builds a WorkflowsHandler backed by the given store and executor.
-func NewWorkflowsHandler(store *webdavstore.Store, executor Executor, log *slog.Logger) *WorkflowsHandler {
-	return &WorkflowsHandler{store: store, executor: executor, log: log, now: time.Now}
+func NewWorkflowsHandler(store *webdavstore.Store, executor Executor, users UserResolver, triggerIndex TriggerIndexer, log *slog.Logger) *WorkflowsHandler {
+	return &WorkflowsHandler{store: store, executor: executor, users: users, triggerIndex: triggerIndex, log: log, now: time.Now}
+}
+
+// syncTriggerIndex keeps the local trigger index in sync with a workflow's current
+// enabled/trigger state — called after every successful create/update/delete. Best-effort:
+// a failure here only means schedule/event triggers won't fire, it never breaks the CRUD
+// operation the caller is waiting on, so errors are logged, not returned.
+func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader string, wf model.WorkflowDefinition) {
+	if !wf.Enabled || (wf.Trigger.Type != "schedule" && wf.Trigger.Type != "event") {
+		if err := h.triggerIndex.DeleteTriggerIndexEntry(ctx, wf.ID); err != nil {
+			h.log.Error("remove trigger index entry", "workflowID", wf.ID, "error", err)
+		}
+		return
+	}
+
+	userID, err := h.users.Me(ctx, authHeader)
+	if err != nil {
+		h.log.Error("sync trigger index: resolve user", "workflowID", wf.ID, "error", err)
+		return
+	}
+
+	entry := localdb.TriggerIndexEntry{WorkflowID: wf.ID, UserID: userID, TriggerType: wf.Trigger.Type}
+	if wf.Trigger.Type == "schedule" {
+		entry.Schedule = wf.Trigger.Schedule
+	}
+	if wf.Trigger.Type == "event" && wf.Trigger.Event != nil {
+		entry.EventType = wf.Trigger.Event.Type
+	}
+	if err := h.triggerIndex.UpsertTriggerIndexEntry(ctx, entry); err != nil {
+		h.log.Error("update trigger index entry", "workflowID", wf.ID, "error", err)
+	}
 }
 
 // List handles GET /me/workflows.
@@ -98,6 +139,7 @@ func (h *WorkflowsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not create workflow")
 		return
 	}
+	h.syncTriggerIndex(r.Context(), "Bearer "+token, wf)
 
 	writeJSON(w, http.StatusCreated, wf)
 }
@@ -173,6 +215,7 @@ func (h *WorkflowsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not update workflow")
 		return
 	}
+	h.syncTriggerIndex(r.Context(), "Bearer "+token, *existing)
 
 	writeJSON(w, http.StatusOK, existing)
 }
@@ -194,6 +237,9 @@ func (h *WorkflowsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("delete workflow", "error", err)
 		writeError(w, http.StatusBadGateway, "storeUnavailable", "could not delete workflow")
 		return
+	}
+	if err := h.triggerIndex.DeleteTriggerIndexEntry(r.Context(), id); err != nil {
+		h.log.Error("remove trigger index entry", "workflowID", id, "error", err)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

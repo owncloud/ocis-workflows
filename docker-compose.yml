@@ -52,6 +52,9 @@ services:
       WORKFLOWS_DEBUG_ADDR: 0.0.0.0:9109
       WORKFLOWS_ALLOWED_ORIGIN: https://host.docker.internal:9200
       WORKFLOWS_DB_PATH: /data/workflows.db
+      # Dev-only fixed key so automation (app-passwords) survives container restarts in
+      # this stack. Generate your own for anything beyond local dev/e2e.
+      WORKFLOWS_ENCRYPTION_KEY: ${WORKFLOWS_ENCRYPTION_KEY:-mP/XDZvobHVH8mW0A7bIoodaApk0oHUN5RRtmiYI80o=}
     volumes:
       - workflows-data:/data
     labels:
