@@ -25,6 +25,10 @@
         <span>{{ enabled ? $gettext('Active') : $gettext('Inactive') }}</span>
       </label>
 
+      <oc-button v-if="!isNew()" appearance="outline" @click="executionsPanelOpen = true">
+        {{ $gettext('Executions') }}
+      </oc-button>
+
       <oc-button variation="primary" :disabled="saving" @click="save">
         {{ $gettext('Save') }}
       </oc-button>
@@ -82,6 +86,13 @@
       @update="(data) => updateNodeData(selectedNode!.id, data)"
       @close="selectedNodeId = null"
     />
+
+    <ExecutionsPanel
+      v-if="executionsPanelOpen"
+      :backend-url="appConfig.backendUrl"
+      :workflow-id="currentId()"
+      @close="executionsPanelOpen = false"
+    />
   </div>
 </template>
 
@@ -103,6 +114,7 @@ import LlmNode from '../components/nodes/LlmNode.vue'
 import ActionNode from '../components/nodes/ActionNode.vue'
 import NodePicker from '../components/NodePicker.vue'
 import NodeDetailsPanel from '../components/NodeDetailsPanel.vue'
+import ExecutionsPanel from '../components/ExecutionsPanel.vue'
 import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
 import { builderPath, listPath } from '../router'
@@ -137,6 +149,7 @@ const pickerConnectFrom = ref<string | null>(null)
 const pickerAllowedCategories = ref<string[] | undefined>(undefined)
 const selectedNodeId = ref<string | null>(null)
 const selectedNode = computed(() => nodes.value.find((n) => n.id === selectedNodeId.value) ?? null)
+const executionsPanelOpen = ref(false)
 
 const startEditingName = () => {
   editingName.value = true
