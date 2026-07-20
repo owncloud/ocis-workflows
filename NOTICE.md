@@ -1,5 +1,7 @@
 # Third-Party Notices
 
+Copyright ownCloud GmbH - A Kiteworks Company and ownCloud contributors.
+
 This project is licensed under Apache-2.0 (see `LICENSE`). It depends on the following
 third-party components not licensed under Apache-2.0:
 

@@ -2,6 +2,9 @@
 
 Thank you for your interest in contributing to this project!
 
+Please read the full contributing guidelines at:
+**<https://owncloud.com/contribute/>**
+
 Please open an issue to discuss significant changes before submitting a pull request. For
 small fixes, feel free to open a PR directly.
 
@@ -37,3 +40,17 @@ and in CI.
 - **Rebase policy**: Always rebase; never create merge commits.
 - **Signed commits**: All commits **must** be PGP/GPG signed (`git commit -S -s`).
 - **DCO sign-off**: Every commit needs a `Signed-off-by` line (`git commit -s`).
+
+## OSPO policy constraints
+
+### GitHub Actions
+
+- **Only** use actions owned by `owncloud`, created by GitHub (`actions/*`), verified on the
+  GitHub Marketplace, or verified by the ownCloud Maintainers.
+- Pin all actions to their full commit SHA (not tags): `uses: actions/checkout@<SHA> # vX.Y.Z`
+- Never introduce actions from unverified third parties.
+
+### Dependency management
+
+- Dependabot is configured for automated dependency updates.
+- Do not introduce new dependencies without discussion in an issue first.

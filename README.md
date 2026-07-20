@@ -86,9 +86,9 @@ cd backend && go build ./cmd/workflows   # or docker build -f docker/Dockerfile 
 
 ## Support
 
-- [GitHub Issues](https://github.com/owncloud/ocis-workflows/issues) — bug reports, feature
-  requests, and questions
-- ospo@kiteworks.com
+- **Enterprise Support**: <https://owncloud.com/contact-us/>
+- **Community discussions**: <https://github.com/orgs/owncloud/discussions>
+- **Matrix Chat**: <https://app.element.io/#/room/#owncloud:matrix.org>
 
 See [SUPPORT.md](SUPPORT.md) for details.
 
@@ -114,4 +114,5 @@ See [SECURITY.md](SECURITY.md) for how to report one privately.
 
 ## License
 
-This project is licensed under the [Apache-2.0](LICENSE) license, copyright ownCloud GmbH - A Kiteworks Company and ownCloud contributors.
+This project is licensed under the [Apache-2.0](LICENSE) license, copyright ownCloud GmbH -
+A Kiteworks Company and ownCloud contributors.

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "oCIS extension for building automated AI workflows on your files.",
   "license": "Apache-2.0",
-  "author": "ownCloud GmbH - A Kiteworks Company and ownCloud contributors",
+  "author": "ownCloud GmbH - A Kiteworks Company",
   "private": true,
   "homepage": "https://github.com/owncloud/ocis-workflows",
   "type": "module",
