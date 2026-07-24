@@ -95,6 +95,8 @@
       :node="selectedNode"
       :nodes="nodes"
       :edges="edges"
+      :workflow-id="isNew() ? '' : currentId()"
+      :backend-url="appConfig.backendUrl"
       @update="(data) => updateNodeData(selectedNode!.id, data)"
       @close="selectedNodeId = null"
     />

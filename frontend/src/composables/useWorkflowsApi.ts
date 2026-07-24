@@ -5,6 +5,7 @@ import type {
   GraphCollection,
   GraphError,
   NewWorkflowDefinition,
+  WebhookTokenInfo,
   WorkflowDefinition
 } from '../types/workflow'
 
@@ -23,6 +24,11 @@ export class WorkflowsApiError extends Error {
 export function useWorkflowsApi(backendUrl: string) {
   const authStore = useAuthStore()
   const base = backendUrl.replace(/\/$/, '')
+  // The webhook trigger's own POST /hooks/{workflowId}/{token} route lives outside
+  // /api/v1beta1 (see backend/pkg/server/http/server.go) — it's reached through the same
+  // reverse-proxy prefix as everything else in this app (.../workflows/...), just without
+  // the /api/v1beta1 suffix every other request in this file uses.
+  const hooksBase = base.replace(/\/api\/v1beta1$/, '')
 
   const buildHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -113,6 +119,28 @@ export function useWorkflowsApi(backendUrl: string) {
       `/me/workflows/${encodeURIComponent(workflowId)}/executions/${encodeURIComponent(execId)}`
     )
 
+  const toWebhookTokenInfo = (raw: { token: string; path: string }): WebhookTokenInfo => ({
+    token: raw.token,
+    url: `${hooksBase}${raw.path}`
+  })
+
+  /** "Reveal" — fetches the webhook trigger's current token/URL. 404s (via
+   *  WorkflowsApiError) if the workflow isn't a webhook trigger, or no token has been
+   *  generated for it yet (shouldn't happen once saved — the backend generates one on
+   *  first save of a webhook trigger). */
+  const getWebhookToken = (workflowId: string): Promise<WebhookTokenInfo> =>
+    request<{ token: string; path: string }>(
+      `/me/workflows/${encodeURIComponent(workflowId)}/webhook-token`
+    ).then(toWebhookTokenInfo)
+
+  /** "Rotate" — replaces the webhook trigger's token, immediately invalidating the
+   *  previous URL for any external caller still using it. */
+  const rotateWebhookToken = (workflowId: string): Promise<WebhookTokenInfo> =>
+    request<{ token: string; path: string }>(
+      `/me/workflows/${encodeURIComponent(workflowId)}/webhook-token/rotate`,
+      { method: 'POST' }
+    ).then(toWebhookTokenInfo)
+
   const getAutomationStatus = (): Promise<AutomationStatus> => request<AutomationStatus>('/me/automation')
 
   const connectAutomation = (): Promise<AutomationStatus> =>
@@ -129,6 +157,8 @@ export function useWorkflowsApi(backendUrl: string) {
     runWorkflow,
     listExecutions,
     getExecution,
+    getWebhookToken,
+    rotateWebhookToken,
     getAutomationStatus,
     connectAutomation,
     disconnectAutomation

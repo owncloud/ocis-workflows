@@ -49,7 +49,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestSyncTriggerIndexGeneratesWebhookTokenOnFirstSave(t *testing.T) {
 	idx := newFakeTriggerIndexer()
-	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, discardLogger())
+	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, nil, discardLogger())
 
 	wf := model.WorkflowDefinition{ID: "wf-1", Enabled: true, Trigger: model.WorkflowTrigger{Type: "webhook"}}
 	h.syncTriggerIndex(t.Context(), "Bearer x", wf)
@@ -71,7 +71,7 @@ func TestSyncTriggerIndexGeneratesWebhookTokenOnFirstSave(t *testing.T) {
 
 func TestSyncTriggerIndexPreservesWebhookTokenAcrossUpdates(t *testing.T) {
 	idx := newFakeTriggerIndexer()
-	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, discardLogger())
+	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, nil, discardLogger())
 
 	wf := model.WorkflowDefinition{ID: "wf-1", Enabled: true, Trigger: model.WorkflowTrigger{Type: "webhook"}}
 	h.syncTriggerIndex(t.Context(), "Bearer x", wf)
@@ -90,7 +90,7 @@ func TestSyncTriggerIndexPreservesWebhookTokenAcrossUpdates(t *testing.T) {
 
 func TestSyncTriggerIndexKeepsWebhookTokenWhileDisabled(t *testing.T) {
 	idx := newFakeTriggerIndexer()
-	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, discardLogger())
+	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, nil, discardLogger())
 
 	enabled := model.WorkflowDefinition{ID: "wf-1", Enabled: true, Trigger: model.WorkflowTrigger{Type: "webhook"}}
 	h.syncTriggerIndex(t.Context(), "Bearer x", enabled)
@@ -117,7 +117,7 @@ func TestSyncTriggerIndexKeepsWebhookTokenWhileDisabled(t *testing.T) {
 
 func TestSyncTriggerIndexDeletesEntryWhenTriggerTypeChangesAway(t *testing.T) {
 	idx := newFakeTriggerIndexer()
-	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, discardLogger())
+	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, nil, discardLogger())
 
 	webhook := model.WorkflowDefinition{ID: "wf-1", Enabled: true, Trigger: model.WorkflowTrigger{Type: "webhook"}}
 	h.syncTriggerIndex(t.Context(), "Bearer x", webhook)
@@ -133,7 +133,7 @@ func TestSyncTriggerIndexDeletesEntryWhenTriggerTypeChangesAway(t *testing.T) {
 
 func TestSyncTriggerIndexScheduleStillDeletedWhenDisabled(t *testing.T) {
 	idx := newFakeTriggerIndexer()
-	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, discardLogger())
+	h := NewWorkflowsHandler(nil, nil, &fakeUserResolver{userID: "user-1"}, idx, nil, discardLogger())
 
 	wf := model.WorkflowDefinition{ID: "wf-1", Enabled: true, Trigger: model.WorkflowTrigger{Type: "schedule", Schedule: "0 * * * *"}}
 	h.syncTriggerIndex(t.Context(), "Bearer x", wf)
