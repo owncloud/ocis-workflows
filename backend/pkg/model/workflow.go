@@ -3,9 +3,15 @@ package model
 
 // WorkflowTrigger describes what starts a workflow run.
 type WorkflowTrigger struct {
-	Type     string        `json:"type"` // manual | schedule | event
+	Type     string        `json:"type"` // manual | schedule | event | webhook
 	Schedule string        `json:"schedule,omitempty"`
 	Event    *EventTrigger `json:"event,omitempty"`
+	// Webhook triggers have no user-configured fields here: the per-workflow token that
+	// gates POST /hooks/{workflowId}/{token} is generated server-side and lives only in
+	// the sidecar's local trigger index (see localdb.TriggerIndexEntry.WebhookToken),
+	// never in this definition — this resource is stored verbatim via WebDAV in the
+	// caller's own space, which is a much broader-read surface than the token should ever
+	// be exposed on.
 }
 
 // EventTrigger describes a file-activity trigger and its filters.
@@ -81,7 +87,7 @@ type WorkflowPatch struct {
 type ExecutionRecord struct {
 	ID                string       `json:"id"`
 	WorkflowID        string       `json:"workflowId"`
-	TriggeredBy       string       `json:"triggeredBy"` // manual | schedule | event
+	TriggeredBy       string       `json:"triggeredBy"` // manual | schedule | event | webhook
 	Status            string       `json:"status"`      // running | succeeded | failed
 	StartedDateTime   string       `json:"startedDateTime"`
 	CompletedDateTime string       `json:"completedDateTime,omitempty"`
@@ -108,6 +114,16 @@ type ErrorDetail struct {
 type AutomationStatus struct {
 	Connected          bool   `json:"connected"`
 	ExpirationDateTime string `json:"expirationDateTime,omitempty"`
+}
+
+// WebhookTokenResponse is returned by the webhook trigger's reveal (GET) and rotate (POST)
+// endpoints — the one deliberate way a webhook trigger's token is ever surfaced to a
+// caller, distinct from the normal workflow GET/List/Patch responses, which never include
+// it. Path is the request path (no scheme/host) an external caller should POST to; the
+// frontend combines it with this backend's own known public base URL.
+type WebhookTokenResponse struct {
+	Token string `json:"token"`
+	Path  string `json:"path"`
 }
 
 // Collection wraps a list response in Graph's "value" envelope.

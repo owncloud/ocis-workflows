@@ -118,6 +118,56 @@ func TestRunTriggerLLMAction(t *testing.T) {
 	}
 }
 
+func TestRunWithVarsSeedsExtraVarsBeforeExecution(t *testing.T) {
+	fLLM := &fakeLLM{response: "ok"}
+	fFiles := &fakeFiles{content: "file body", name: "doc.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-webhook",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "tag",
+					"actionParams": map[string]any{"tag": "{{webhook.body.status}}"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{{ID: "e1", Source: "trigger", Target: "action-1"}},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	extraVars := map[string]string{
+		"webhook.body":        `{"status":"approved"}`,
+		"webhook.body.status": "approved",
+	}
+	record := e.RunWithVars(context.Background(), "token", wf, "webhook", "/Docs/doc.txt", extraVars)
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fGraph.taggedWith != "approved" {
+		t.Fatalf("expected tag rendered from webhook extra var, got %q", fGraph.taggedWith)
+	}
+}
+
+func TestRunWithVarsNilExtraVarsBehavesLikeRun(t *testing.T) {
+	fLLM := &fakeLLM{response: "a short summary"}
+	fFiles := &fakeFiles{content: "file body", name: "doc.txt"}
+	fGraph := &fakeGraph{}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.RunWithVars(context.Background(), "token", testWorkflow(), "manual", "/Docs/doc.txt", nil)
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if len(record.NodeResults) != 2 {
+		t.Fatalf("expected 2 node results (llm + action), got %d", len(record.NodeResults))
+	}
+}
+
 func TestRunStopsOnNodeFailure(t *testing.T) {
 	fLLM := &fakeLLM{err: errFakeLLM}
 	fFiles := &fakeFiles{content: "x", name: "x.txt"}

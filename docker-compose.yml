@@ -59,7 +59,10 @@ services:
     labels:
       traefik.enable: true
       traefik.http.routers.workflows-backend.tls: true
-      traefik.http.routers.workflows-backend.rule: Host(`host.docker.internal`) && PathPrefix(`/workflows/api`)
+      # /workflows/hooks is the webhook trigger's public, token-gated route (see
+      # backend/pkg/server/http/server.go) — deliberately outside /workflows/api's own
+      # bearer-token-guarded group, but still needs to reach this same backend service.
+      traefik.http.routers.workflows-backend.rule: Host(`host.docker.internal`) && (PathPrefix(`/workflows/api`) || PathPrefix(`/workflows/hooks`))
       traefik.http.routers.workflows-backend.entrypoints: ocis
       traefik.http.services.workflows-backend.loadbalancer.server.port: 9105
       traefik.http.routers.workflows-backend.middlewares: workflows-backend-stripprefix,cors

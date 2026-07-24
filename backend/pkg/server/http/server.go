@@ -21,7 +21,11 @@ type Options struct {
 	Validator     *auth.Validator
 	Workflows     *service.WorkflowsHandler
 	Automation    *service.AutomationHandler
-	Logger        *slog.Logger
+	// Hooks serves the webhook trigger route, POST /hooks/{workflowId}/{token} —
+	// deliberately mounted outside the /api/v1beta1 group below and its
+	// Validator.Middleware bearer-token gate. See the route registration for why.
+	Hooks  *service.HooksHandler
+	Logger *slog.Logger
 }
 
 // New builds the router for the workflows public API.
@@ -53,6 +57,13 @@ func New(opts Options) http.Handler {
 				r.Delete("/", opts.Workflows.Delete)
 				r.Post("/run", opts.Workflows.Run)
 
+				// Reveal/rotate the webhook trigger's token — unlike the public
+				// /hooks/... route below, these live behind the normal bearer-token
+				// auth: they're how the *owner* fetches their own token to configure an
+				// external caller with, not how the external caller reaches oCIS.
+				r.Get("/webhook-token", opts.Workflows.WebhookToken)
+				r.Post("/webhook-token/rotate", opts.Workflows.RotateWebhookToken)
+
 				r.Route("/executions", func(r chi.Router) {
 					r.Get("/", opts.Workflows.ListExecutions)
 					r.Get("/{execId}", opts.Workflows.GetExecution)
@@ -66,6 +77,16 @@ func New(opts Options) http.Handler {
 			r.Delete("/", opts.Automation.Disconnect)
 		})
 	})
+
+	// The webhook trigger route is deliberately outside the /api/v1beta1 group above: it
+	// bypasses Validator.Middleware's bearer-token check by design. An external caller
+	// triggering this (a CI pipeline, another SaaS's outgoing webhook, a form submission)
+	// has no oCIS session to present a bearer token from — the per-workflow token embedded
+	// in the URL itself is the credential instead, checked in constant time against the
+	// stored value inside HooksHandler.Trigger, with a request-rate limiter as the
+	// compensating control against token-guessing/flooding that normal bearer auth would
+	// otherwise have provided incidentally.
+	r.Post("/hooks/{workflowId}/{token}", opts.Hooks.Trigger)
 
 	return r
 }
