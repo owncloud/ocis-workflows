@@ -5,6 +5,7 @@ import type {
   GraphCollection,
   GraphError,
   NewWorkflowDefinition,
+  Space,
   WorkflowDefinition
 } from '../types/workflow'
 
@@ -120,6 +121,8 @@ export function useWorkflowsApi(backendUrl: string) {
 
   const disconnectAutomation = (): Promise<void> => request<void>('/me/automation', { method: 'DELETE' })
 
+  const listSpaces = (): Promise<Space[]> => request<GraphCollection<Space>>('/me/spaces').then((c) => c.value)
+
   return {
     listWorkflows,
     getWorkflow,
@@ -131,6 +134,7 @@ export function useWorkflowsApi(backendUrl: string) {
     getExecution,
     getAutomationStatus,
     connectAutomation,
-    disconnectAutomation
+    disconnectAutomation,
+    listSpaces
   }
 }
