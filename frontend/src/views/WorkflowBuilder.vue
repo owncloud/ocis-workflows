@@ -118,7 +118,7 @@ import ExecutionsPanel from '../components/ExecutionsPanel.vue'
 import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
 import { builderPath, listPath } from '../router'
-import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY } from '../nodeTypes'
+import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY } from '../nodeTypes'
 import type { TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
 const props = defineProps<{ id: string }>()
@@ -184,7 +184,10 @@ const fitViewSoon = () => {
 const openPicker = (fromNodeId: string | null, allowedCategories?: string[]) => {
   pickerConnectFrom.value = fromNodeId
   pickerAllowedCategories.value =
-    allowedCategories ?? (nodes.value.some((n) => n.type === 'trigger') ? [AI_CATEGORY, ACTION_CATEGORY] : [TRIGGER_CATEGORY])
+    allowedCategories ??
+    (nodes.value.some((n) => n.type === 'trigger')
+      ? [AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY]
+      : [TRIGGER_CATEGORY])
   pickerOpen.value = true
 }
 
