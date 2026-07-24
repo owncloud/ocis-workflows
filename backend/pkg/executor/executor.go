@@ -55,6 +55,18 @@ func New(llmClient LLMClient, files FileClient, graph GraphClient, log *slog.Log
 // resourcePath is the WebDAV path of the file this run operates on — optional for graphs
 // that don't reference {{file.*}} or perform file actions.
 func (e *Executor) Run(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord {
+	return e.run(ctx, authHeader, wf, triggeredBy, resourcePath, nil)
+}
+
+// RunWithVars is Run, plus extraVars seeded into the graph's vars before the first node
+// runs (so e.g. an llm/action node's {{webhook.body.status}} template resolves) — used by
+// the webhook trigger to expose its request body. extraVars may be nil, in which case this
+// behaves exactly like Run.
+func (e *Executor) RunWithVars(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string, extraVars map[string]string) *model.ExecutionRecord {
+	return e.run(ctx, authHeader, wf, triggeredBy, resourcePath, extraVars)
+}
+
+func (e *Executor) run(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string, extraVars map[string]string) *model.ExecutionRecord {
 	record := &model.ExecutionRecord{
 		ID:              uuid.NewString(),
 		WorkflowID:      wf.ID,
@@ -65,6 +77,9 @@ func (e *Executor) Run(ctx context.Context, authHeader string, wf model.Workflow
 	}
 
 	vars := map[string]string{}
+	for k, v := range extraVars {
+		vars[k] = v
+	}
 	currentPath := resourcePath
 	if resourcePath != "" {
 		content, name, err := e.files.GetContent(ctx, authHeader, resourcePath)
