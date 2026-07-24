@@ -118,6 +118,12 @@
           placeholder="llm.output.category == &quot;invoice&quot;"
         />
       </div>
+
+      <div class="workflows-ndv-footer">
+        <oc-button variation="primary" @click="$emit('close')">
+          {{ $gettext('Done') }}
+        </oc-button>
+      </div>
     </div>
   </div>
 </template>
@@ -226,5 +232,12 @@ const paramMessage = actionParam('message')
   width: 100%;
   font-family: monospace;
   padding: 0.5rem;
+}
+.workflows-ndv-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--oc-color-border, rgba(0, 0, 0, 0.1));
 }
 </style>
