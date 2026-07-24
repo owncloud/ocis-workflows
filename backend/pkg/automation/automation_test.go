@@ -22,7 +22,7 @@ func TestStatusReportsConnectedForFutureExpiry(t *testing.T) {
 		t.Fatalf("UpsertAutomation: %v", err)
 	}
 
-	svc := New(&fakeGraphClient{}, db, discardLogger())
+	svc := New(&fakeGraphClient{}, db, nil, discardLogger())
 
 	status, err := svc.Status(ctx, "user-1")
 	if err != nil {
@@ -51,7 +51,7 @@ func TestStatusReportsDisconnectedForPastExpiry(t *testing.T) {
 		t.Fatalf("UpsertAutomation: %v", err)
 	}
 
-	svc := New(&fakeGraphClient{}, db, discardLogger())
+	svc := New(&fakeGraphClient{}, db, nil, discardLogger())
 
 	status, err := svc.Status(ctx, "user-1")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestStatusReportsDisconnectedWhenNeverConnected(t *testing.T) {
 	db := testDB(t)
 	ctx := t.Context()
 
-	svc := New(&fakeGraphClient{}, db, discardLogger())
+	svc := New(&fakeGraphClient{}, db, nil, discardLogger())
 
 	status, err := svc.Status(ctx, "never-connected-user")
 	if err != nil {

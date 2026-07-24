@@ -179,6 +179,92 @@ func TestHandleEventIgnoresUnmappedSSEEventType(t *testing.T) {
 	}
 }
 
+// TestReconcileRetriesConsumerAfterTransientGetAutomationFailure regression-tests the bug
+// where consumeForUser inserted its m.active entry *before* calling GetAutomation, but never
+// removed it if GetAutomation failed (e.g. the user has an event trigger but hasn't connected
+// automation yet). Because the entry stayed in m.active forever, every subsequent reconcile
+// pass saw the userID as "already active" and never retried it, even after automation was
+// connected later.
+func TestReconcileRetriesConsumerAfterTransientGetAutomationFailure(t *testing.T) {
+	triggers := &fakeTriggerStore{
+		entries:     []localdb.TriggerIndexEntry{{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}},
+		automations: map[string]*localdb.Automation{}, // automation not connected yet
+	}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
+	m := New(triggers, store, &fakePathResolver{}, &fakeExecutor{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	m.reconcile(ctx)
+	// consumeForUser should observe the GetAutomation failure, log, and return — and in doing
+	// so remove its own now-dead entry from m.active so a later reconcile pass can retry it.
+	waitFor(t, time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.active["user-1"]
+		return !ok
+	})
+
+	// Automation gets connected sometime later.
+	triggers.automations["user-1"] = &localdb.Automation{UserID: "user-1", Username: "admin", AppPassword: "secret"}
+
+	// The next reconcile pass (in production, either the next tick or a Kick()) must retry
+	// the consumer now that the entry was cleared, instead of treating it as still active.
+	m.reconcile(ctx)
+	waitFor(t, time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.active["user-1"]
+		return ok
+	})
+}
+
+// TestKickTriggersImmediateReconcile regression-tests the up-to-30s blind window: without an
+// event-driven reconcile hook, Start only reconciles on its periodic ticker, so a trigger
+// added right after Start began running would have to wait for the next tick to pick up. Kick
+// lets callers (workflow trigger-index writes, automation Connect) request an immediate pass.
+func TestKickTriggersImmediateReconcile(t *testing.T) {
+	// A pre-existing "warm" trigger lets the test prove Start's initial synchronous
+	// reconcile — and hence its select loop — has actually run, without racing: checking
+	// for an *absence* of state right after `go m.Start(ctx)` would trivially succeed
+	// before Start's goroutine is even scheduled, proving nothing.
+	triggers := &fakeTriggerStore{
+		entries: []localdb.TriggerIndexEntry{{WorkflowID: "wf-warm", UserID: "user-warm", TriggerType: "event", EventType: "upload"}},
+		automations: map[string]*localdb.Automation{
+			"user-warm": {UserID: "user-warm", Username: "admin", AppPassword: "x"},
+			"user-1":    {UserID: "user-1", Username: "admin", AppPassword: "x"},
+		},
+	}
+	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	go m.Start(ctx)
+	waitFor(t, time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.active["user-warm"]
+		return ok
+	})
+
+	// Only now, after reconcile() is known to have returned and the select loop entered,
+	// mutate the wanted set — simulating a workflow with an event trigger being created for
+	// user-1 — and ask for an immediate reconcile instead of waiting for the ticker.
+	triggers.entries = append(triggers.entries, localdb.TriggerIndexEntry{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"})
+	m.Kick()
+
+	// This must succeed well within the 1-hour ticker interval, proving Kick — not the
+	// ticker — is what triggered the reconcile.
+	waitFor(t, time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.active["user-1"]
+		return ok
+	})
+}
+
 func TestReconcileStartsAndStopsConsumersAsTriggersChange(t *testing.T) {
 	triggers := &fakeTriggerStore{
 		entries:     []localdb.TriggerIndexEntry{{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}},

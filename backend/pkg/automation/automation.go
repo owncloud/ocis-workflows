@@ -28,16 +28,25 @@ type GraphClient interface {
 	RevokeAppPassword(ctx context.Context, authHeader, token string) error
 }
 
+// ReconcileKicker lets Connect ask the SSE manager to reconcile its active consumers
+// immediately, instead of the newly-connected user's consumer only starting on the manager's
+// next periodic tick (up to sseReconcileInterval later). Satisfied by *sse.Manager.
+type ReconcileKicker interface {
+	Kick()
+}
+
 // Service implements the /me/automation status/connect/disconnect operations.
 type Service struct {
 	graph GraphClient
 	db    *localdb.DB
+	kick  ReconcileKicker
 	log   *slog.Logger
 }
 
-// New builds a Service.
-func New(graph GraphClient, db *localdb.DB, log *slog.Logger) *Service {
-	return &Service{graph: graph, db: db, log: log}
+// New builds a Service. kick may be nil, in which case a newly connected user's SSE consumer
+// is only picked up on the SSE manager's next periodic reconcile tick.
+func New(graph GraphClient, db *localdb.DB, kick ReconcileKicker, log *slog.Logger) *Service {
+	return &Service{graph: graph, db: db, kick: kick, log: log}
 }
 
 func toStatus(a *localdb.Automation) *model.AutomationStatus {
@@ -91,6 +100,13 @@ func (s *Service) Connect(ctx context.Context, authHeader string) (*model.Automa
 	}
 
 	s.log.Info("automation connected", "userID", userID)
+
+	// The user may already have an event trigger waiting on automation being connected —
+	// nudge the SSE manager to pick it up now rather than on its next periodic tick.
+	if s.kick != nil {
+		s.kick.Kick()
+	}
+
 	return toStatus(&a), nil
 }
 

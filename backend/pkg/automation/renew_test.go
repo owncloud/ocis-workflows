@@ -72,7 +72,7 @@ func TestRenewDueRenewsAutomationNearingExpiry(t *testing.T) {
 
 	newExpiry := time.Now().Add(defaultExpiry).Truncate(time.Second)
 	graph := &fakeGraphClient{mintToken: "new-password", mintExpiry: newExpiry}
-	svc := New(graph, db, discardLogger())
+	svc := New(graph, db, nil, discardLogger())
 
 	svc.renewDue(ctx)
 
@@ -114,7 +114,7 @@ func TestRenewDueSkipsAutomationNotNearingExpiry(t *testing.T) {
 	}
 
 	graph := &fakeGraphClient{}
-	svc := New(graph, db, discardLogger())
+	svc := New(graph, db, nil, discardLogger())
 
 	svc.renewDue(ctx)
 
@@ -165,7 +165,7 @@ func TestRenewDueContinuesPastAFailedRenewal(t *testing.T) {
 
 	newExpiry := time.Now().Add(defaultExpiry).Truncate(time.Second)
 	graph := &selectiveFailGraphClient{failForUsername: "admin", mintToken: "renewed", mintExpiry: newExpiry}
-	svc := New(graph, db, discardLogger())
+	svc := New(graph, db, nil, discardLogger())
 
 	svc.renewDue(ctx) // must not panic or stop early
 

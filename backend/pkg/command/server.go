@@ -66,9 +66,15 @@ func RunServer(cfg config.Config) error {
 	}
 	defer db.Close()
 
-	automationService := automation.New(ocisClient, db, log)
+	// sseManager is constructed before the handlers below so its Kick method can be wired
+	// into them: both a workflow's event trigger being added and a user's automation being
+	// connected should nudge the SSE manager to reconcile immediately instead of waiting for
+	// its next periodic tick (up to sseReconcileInterval later).
+	sseManager := sse.New(db, store, ocisClient, graphExecutor, cfg.OCISURL, cfg.OCISInsecure, sseReconcileInterval, log)
 
-	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, ocisClient, db, log)
+	automationService := automation.New(ocisClient, db, sseManager, log)
+
+	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, ocisClient, db, sseManager, log)
 	automationHandler := service.NewAutomationHandler(automationService, ocisClient)
 
 	apiHandler := httpserver.New(httpserver.Options{
@@ -82,7 +88,6 @@ func RunServer(cfg config.Config) error {
 	apiServer := &http.Server{Addr: cfg.HTTPAddr, Handler: apiHandler}
 	debugSrv := &http.Server{Addr: cfg.DebugAddr, Handler: debugserver.New()}
 	sched := scheduler.New(db, store, graphExecutor, scheduleTickInterval, log)
-	sseManager := sse.New(db, store, ocisClient, graphExecutor, cfg.OCISURL, cfg.OCISInsecure, sseReconcileInterval, log)
 
 	g, gCtx := errgroup.WithContext(ctx)
 

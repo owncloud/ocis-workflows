@@ -33,19 +33,29 @@ type TriggerIndexer interface {
 	DeleteTriggerIndexEntry(ctx context.Context, workflowID string) error
 }
 
+// ReconcileKicker lets a trigger-index write ask the SSE manager to reconcile its active
+// consumers immediately, instead of that consumer only starting on the manager's next
+// periodic tick (up to sseReconcileInterval later). Satisfied by *sse.Manager.
+type ReconcileKicker interface {
+	Kick()
+}
+
 // WorkflowsHandler implements the /me/workflows Graph-shaped REST API.
 type WorkflowsHandler struct {
 	store        *webdavstore.Store
 	executor     Executor
 	users        UserResolver
 	triggerIndex TriggerIndexer
+	kick         ReconcileKicker
 	log          *slog.Logger
 	now          func() time.Time
 }
 
-// NewWorkflowsHandler builds a WorkflowsHandler backed by the given store and executor.
-func NewWorkflowsHandler(store *webdavstore.Store, executor Executor, users UserResolver, triggerIndex TriggerIndexer, log *slog.Logger) *WorkflowsHandler {
-	return &WorkflowsHandler{store: store, executor: executor, users: users, triggerIndex: triggerIndex, log: log, now: time.Now}
+// NewWorkflowsHandler builds a WorkflowsHandler backed by the given store and executor. kick
+// may be nil, in which case trigger-index changes are only picked up on the SSE manager's
+// next periodic reconcile tick.
+func NewWorkflowsHandler(store *webdavstore.Store, executor Executor, users UserResolver, triggerIndex TriggerIndexer, kick ReconcileKicker, log *slog.Logger) *WorkflowsHandler {
+	return &WorkflowsHandler{store: store, executor: executor, users: users, triggerIndex: triggerIndex, kick: kick, log: log, now: time.Now}
 }
 
 // syncTriggerIndex keeps the local trigger index in sync with a workflow's current
@@ -79,6 +89,13 @@ func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader stri
 	}
 	if err := h.triggerIndex.UpsertTriggerIndexEntry(ctx, entry); err != nil {
 		h.log.Error("update trigger index entry", "workflowID", wf.ID, "error", err)
+		return
+	}
+
+	// An event trigger just became active for this user — nudge the SSE manager to pick it
+	// up now rather than on its next periodic tick.
+	if entry.TriggerType == "event" && h.kick != nil {
+		h.kick.Kick()
 	}
 }
 
