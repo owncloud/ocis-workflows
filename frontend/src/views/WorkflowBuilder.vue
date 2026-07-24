@@ -90,6 +90,8 @@
     <NodeDetailsPanel
       v-if="selectedNode"
       :node="selectedNode"
+      :nodes="nodes"
+      :edges="edges"
       @update="(data) => updateNodeData(selectedNode!.id, data)"
       @close="selectedNodeId = null"
     />
