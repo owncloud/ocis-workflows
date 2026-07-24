@@ -33,6 +33,8 @@ export interface WorkflowNodeData {
   // llm node
   prompt?: string
   model?: string
+  // shared by llm and extractText nodes: the vars key the node's result is written to
+  // (extractText defaults to "file.text" when unset; llm doesn't read this yet)
   outputVariable?: string
   // action node
   actionType?: ActionType
@@ -42,7 +44,7 @@ export interface WorkflowNodeData {
 
 export interface WorkflowNode {
   id: string
-  type: 'trigger' | 'llm' | 'action'
+  type: 'trigger' | 'llm' | 'action' | 'extractText'
   position: { x: number; y: number }
   data: WorkflowNodeData
 }

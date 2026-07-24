@@ -63,6 +63,13 @@
             @add-next="openPicker(nodeProps.id)"
           />
         </template>
+        <template #node-extractText="nodeProps">
+          <ExtractTextNode
+            v-bind="nodeProps"
+            @configure="selectedNodeId = nodeProps.id"
+            @add-next="openPicker(nodeProps.id)"
+          />
+        </template>
       </VueFlow>
 
       <div v-if="!nodes.length" class="workflows-empty-state">
@@ -112,6 +119,7 @@ import '../styles/canvas.css'
 import TriggerNode from '../components/nodes/TriggerNode.vue'
 import LlmNode from '../components/nodes/LlmNode.vue'
 import ActionNode from '../components/nodes/ActionNode.vue'
+import ExtractTextNode from '../components/nodes/ExtractTextNode.vue'
 import NodePicker from '../components/NodePicker.vue'
 import NodeDetailsPanel from '../components/NodeDetailsPanel.vue'
 import ExecutionsPanel from '../components/ExecutionsPanel.vue'

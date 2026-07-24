@@ -63,6 +63,16 @@
           />
         </template>
 
+        <template v-else-if="node.type === 'extractText'">
+          <oc-text-input
+            v-model="outputVariable"
+            class="workflows-ndv-field"
+            :label="$gettext('Output variable (optional)')"
+            :description-message="$gettext('Variable name the extracted text is stored under (defaults to file.text)')"
+            placeholder="file.text"
+          />
+        </template>
+
         <template v-else-if="node.type === 'action'">
           <template v-if="node.data.actionType === 'tag'">
             <oc-text-input v-model="paramTag" class="workflows-ndv-field" :label="$gettext('Tag')" placeholder="reviewed" />
@@ -152,6 +162,7 @@ const triggerType = field('triggerType')
 const schedule = field('schedule')
 const prompt = field('prompt')
 const model = field('model')
+const outputVariable = field('outputVariable')
 const condition = field('condition')
 
 const eventType = computed<EventTriggerType>({

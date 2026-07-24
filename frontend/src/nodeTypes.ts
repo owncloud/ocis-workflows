@@ -1,6 +1,6 @@
 import type { ActionType, TriggerType, WorkflowNodeData } from './types/workflow'
 
-export type CanvasNodeKind = 'trigger' | 'llm' | 'action'
+export type CanvasNodeKind = 'trigger' | 'llm' | 'action' | 'extractText'
 
 export interface NodeTypeDefinition {
   /** Picker entry id — distinct even when several entries share the same canvas node kind. */
@@ -61,6 +61,15 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     icon: 'chat-3',
     category: AI_CATEGORY,
     defaultData: { prompt: '' }
+  },
+  {
+    id: 'extract-text',
+    nodeKind: 'extractText',
+    label: 'Extract Text',
+    description: 'Pull plain text out of a PDF or Word document for later steps to use',
+    icon: 'file-text',
+    category: AI_CATEGORY,
+    defaultData: {}
   },
   {
     id: 'action-tag',
