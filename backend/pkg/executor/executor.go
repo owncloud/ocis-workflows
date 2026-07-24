@@ -28,6 +28,7 @@ type FileClient interface {
 	Move(ctx context.Context, authHeader, davPath, destDavPath string) error
 	Copy(ctx context.Context, authHeader, davPath, destDavPath string) error
 	Comment(ctx context.Context, authHeader, davPath, text string) error
+	Delete(ctx context.Context, authHeader, davPath string) error
 }
 
 // GraphClient performs Graph-API-only operations (tags have no WebDAV equivalent).
@@ -239,6 +240,16 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 		result.Output = text
 		vars["comment.output"] = text
 		return currentPath, nil
+
+	case "delete":
+		if currentPath == "" {
+			return currentPath, fmt.Errorf("delete action needs a target file")
+		}
+		if err := e.files.Delete(ctx, authHeader, currentPath); err != nil {
+			return currentPath, err
+		}
+		result.Output = currentPath
+		return "", nil
 
 	case "move", "copy":
 		dest := param("destination")
