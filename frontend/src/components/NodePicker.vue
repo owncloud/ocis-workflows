@@ -52,7 +52,7 @@
 import { computed, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { NODE_TYPES, type NodeTypeDefinition } from '../nodeTypes'
-import { hasUpstreamFileSource, isFileDependentActionType } from '../utils/flowValidation'
+import { canUpstreamProvideFile, isFileDependentActionType } from '../utils/flowValidation'
 import type { WorkflowEdge, WorkflowNode } from '../types/workflow'
 
 type PickerItem = NodeTypeDefinition & { disabled: boolean; disabledReason?: string }
@@ -69,10 +69,11 @@ defineEmits<{ (e: 'select', id: string): void; (e: 'close'): void }>()
 const { $gettext } = useGettext()
 const query = ref('')
 
-// Only reliably true when the source node's upstream trigger is a File Event Trigger — see
-// hasUpstreamFileSource for why Manual/Schedule triggers don't count (frontend/src/utils/flowValidation.ts).
-const sourceHasFileSource = computed(() =>
-  props.sourceNodeId ? hasUpstreamFileSource(props.sourceNodeId, props.nodes ?? [], props.edges ?? []) : true
+// Only false when the source node's upstream trigger is structurally incapable of ever
+// providing a file (a Schedule Trigger). A Manual Trigger is deliberately NOT treated as
+// disabling here — see canUpstreamProvideFile for why (frontend/src/utils/flowValidation.ts).
+const sourceCanProvideFile = computed(() =>
+  props.sourceNodeId ? canUpstreamProvideFile(props.sourceNodeId, props.nodes ?? [], props.edges ?? []) : true
 )
 
 const disabledReason = $gettext('Requires a file — add a File Event Trigger upstream.')
@@ -85,7 +86,7 @@ const groups = computed(() => {
     if (props.allowedCategories && !props.allowedCategories.includes(item.category)) continue
     if (q && !item.label.toLowerCase().includes(q) && !item.description.toLowerCase().includes(q)) continue
 
-    const disabled = isFileDependentActionType(item.actionType) && !sourceHasFileSource.value
+    const disabled = isFileDependentActionType(item.actionType) && !sourceCanProvideFile.value
     const existing = byCategory.get(item.category) ?? []
     existing.push({ ...item, disabled, disabledReason: disabled ? disabledReason : undefined })
     byCategory.set(item.category, existing)

@@ -1,4 +1,4 @@
-import type { ActionType, WorkflowEdge, WorkflowNode } from '../types/workflow'
+import type { ActionType, TriggerType, WorkflowEdge, WorkflowNode } from '../types/workflow'
 
 // Action types whose backend implementation (backend/pkg/executor/executor.go, runAction)
 // requires a non-empty `currentPath` and fails the node otherwise. `notify` is the only
@@ -11,23 +11,11 @@ export function isFileDependentActionType(actionType?: ActionType): boolean {
 }
 
 /**
- * Walks the graph backwards from `nodeId` to the trigger it descends from and reports
- * whether that trigger reliably supplies a file.
- *
- * This mirrors real backend behavior (backend/pkg/executor/executor.go): `vars["file.*"]`
- * is only populated when a non-empty `resourcePath` reaches Executor.Run, and `currentPath`
- * for file actions comes from that same value. Only the File Event Trigger is guaranteed to
- * carry one — the SSE event manager always passes the actual path of the file that fired the
- * event (backend/pkg/sse/manager.go). A Schedule Trigger never does: the scheduler always
- * calls Run with an empty resourcePath (backend/pkg/scheduler/scheduler.go). A Manual Trigger
- * only *might*: "Run now" lets a user optionally type a WebDAV path into a free-text field,
- * but nothing about the graph guarantees it's filled in, so it's treated the same as having
- * no file source.
- *
- * If no trigger is reachable upstream at all (e.g. a disconnected/orphan node), this returns
- * true — there's nothing to flag against yet, and other validation should own that concern.
+ * Walks the graph backwards from `nodeId` to the trigger node it descends from.
+ * Returns `undefined` if no trigger is reachable upstream at all (e.g. a disconnected/orphan
+ * node) — that's a different, unowned validation concern.
  */
-export function hasUpstreamFileSource(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): boolean {
+function upstreamTriggerType(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): TriggerType | undefined {
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const incoming = new Map<string, string[]>()
   for (const e of edges) {
@@ -48,7 +36,7 @@ export function hasUpstreamFileSource(nodeId: string, nodes: WorkflowNode[], edg
 
     const node = byId.get(id)
     if (node?.type === 'trigger') {
-      return node.data.triggerType === 'event'
+      return node.data.triggerType
     }
 
     for (const source of incoming.get(id) ?? []) {
@@ -56,6 +44,46 @@ export function hasUpstreamFileSource(nodeId: string, nodes: WorkflowNode[], edg
     }
   }
 
-  // No trigger found upstream at all.
-  return true
+  return undefined
+}
+
+/**
+ * Whether `nodeId`'s upstream trigger *reliably* supplies a file, every single run.
+ *
+ * This mirrors real backend behavior (backend/pkg/executor/executor.go): `vars["file.*"]`
+ * is only populated when a non-empty `resourcePath` reaches Executor.Run, and `currentPath`
+ * for file actions comes from that same value. Only the File Event Trigger is guaranteed to
+ * carry one — the SSE event manager always passes the actual path of the file that fired the
+ * event (backend/pkg/sse/manager.go).
+ *
+ * Both other trigger types fall short of "reliable": a Schedule Trigger never provides one
+ * (the scheduler always calls Run with an empty resourcePath — backend/pkg/scheduler/scheduler.go),
+ * and a Manual Trigger only *might* — "Run now" lets a user optionally type a WebDAV path into
+ * a free-text field, but nothing about the graph guarantees it's filled in.
+ *
+ * Intended for informational nudges (e.g. NodeDetailsPanel's warning) where flagging the
+ * "might not, depends on the user" Manual Trigger case is useful. For deciding whether to
+ * hard-disable an option (e.g. the node picker), use `canUpstreamProvideFile` instead — that
+ * one only rules out the *structurally impossible* Schedule Trigger case, so it doesn't block
+ * the legitimate "Manual Trigger + supply the file at run time" workflow shape.
+ *
+ * Returns `true` when no trigger is reachable upstream at all — nothing to flag against yet.
+ */
+export function hasUpstreamFileSource(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): boolean {
+  const triggerType = upstreamTriggerType(nodeId, nodes, edges)
+  return triggerType === undefined || triggerType === 'event'
+}
+
+/**
+ * Whether `nodeId`'s upstream trigger could *plausibly* supply a file, i.e. it isn't
+ * structurally impossible. Only a Schedule Trigger rules this out — see `hasUpstreamFileSource`
+ * for the full reasoning on why Manual Trigger doesn't (it's conditional on user-supplied input
+ * at run time, not guaranteed, but not impossible either).
+ *
+ * Use this for hard restrictions (e.g. disabling picker entries) where blocking a Manual
+ * Trigger would break a legitimate, common workflow shape.
+ */
+export function canUpstreamProvideFile(nodeId: string, nodes: WorkflowNode[], edges: WorkflowEdge[]): boolean {
+  const triggerType = upstreamTriggerType(nodeId, nodes, edges)
+  return triggerType !== 'schedule'
 }

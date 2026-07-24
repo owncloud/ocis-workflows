@@ -22,9 +22,25 @@ const findItemButton = (wrapper: ReturnType<typeof mountPicker>, label: string) 
   wrapper.findAll('.workflows-picker-item').find((btn) => btn.text().includes(label))
 
 describe('NodePicker file-source restriction', () => {
-  it('disables file-dependent actions (e.g. Move File) when the source is a manual trigger', () => {
+  // A Manual Trigger's "Run now" flow can supply a file via its free-text WebDAV-path field
+  // (backend/pkg/service/workflows.go's runRequest.ResourcePath), so it must NOT be hard-blocked
+  // in the picker — that's a legitimate, common workflow shape. Only a Schedule Trigger is
+  // structurally incapable of ever providing a file (the scheduler always calls
+  // Run(..., "schedule", "") — backend/pkg/scheduler/scheduler.go).
+  it('does not disable Move File when the source is a manual trigger', () => {
     const nodes: WorkflowNode[] = [
       { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'manual' } }
+    ]
+    const wrapper = mountPicker('trigger', nodes)
+
+    const moveButton = findItemButton(wrapper, 'Move File')
+    expect(moveButton).toBeTruthy()
+    expect(moveButton!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('disables file-dependent actions (e.g. Move File) when the source is a schedule trigger', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'schedule', schedule: '0 * * * *' } }
     ]
     const wrapper = mountPicker('trigger', nodes)
 
@@ -52,7 +68,7 @@ describe('NodePicker file-source restriction', () => {
 
   it('does not fire select when clicking a disabled entry', async () => {
     const nodes: WorkflowNode[] = [
-      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'manual' } }
+      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'schedule', schedule: '0 * * * *' } }
     ]
     const wrapper = mountPicker('trigger', nodes)
 
@@ -64,7 +80,7 @@ describe('NodePicker file-source restriction', () => {
 
   it('leaves non-file actions (e.g. Send Notification) enabled regardless of upstream trigger', () => {
     const nodes: WorkflowNode[] = [
-      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'manual' } }
+      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'schedule', schedule: '0 * * * *' } }
     ]
     const wrapper = mountPicker('trigger', nodes)
 
