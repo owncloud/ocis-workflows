@@ -9,7 +9,8 @@ import { createGettext } from 'vue3-gettext'
 // auth store (no token needed since we never hit the network in this test).
 vi.mock('@ownclouders/web-pkg', () => ({
   useRoute: () => ref({ params: { id: 'new' } }),
-  useAuthStore: () => ({ accessToken: 'test-token' })
+  useAuthStore: () => ({ accessToken: 'test-token' }),
+  useMessages: () => ({ showMessage: vi.fn() })
 }))
 
 // The canvas itself (pan/zoom/measuring DOM nodes) is irrelevant to this behavior and
