@@ -28,6 +28,7 @@ type FileClient interface {
 	Move(ctx context.Context, authHeader, davPath, destDavPath string) error
 	Copy(ctx context.Context, authHeader, davPath, destDavPath string) error
 	Comment(ctx context.Context, authHeader, davPath, text string) error
+	CreateFolder(ctx context.Context, authHeader, davPath string) error
 }
 
 // GraphClient performs Graph-API-only operations (tags have no WebDAV equivalent).
@@ -236,6 +237,17 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = text
+		return currentPath, nil
+
+	case "createFolder":
+		folderPath := param("path")
+		if folderPath == "" {
+			return currentPath, fmt.Errorf("createFolder action needs a path")
+		}
+		if err := e.files.CreateFolder(ctx, authHeader, folderPath); err != nil {
+			return currentPath, err
+		}
+		result.Output = folderPath
 		return currentPath, nil
 
 	case "move", "copy":

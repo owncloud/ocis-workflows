@@ -24,10 +24,11 @@ func (f *fakeLLM) Complete(_ context.Context, messages []llm.Message, _ string, 
 }
 
 type fakeFiles struct {
-	content   string
-	name      string
-	moved     [2]string
-	commented [2]string
+	content       string
+	name          string
+	moved         [2]string
+	commented     [2]string
+	createdFolder string
 }
 
 func (f *fakeFiles) GetContent(_ context.Context, _, _ string) ([]byte, string, error) {
@@ -43,6 +44,10 @@ func (f *fakeFiles) Copy(_ context.Context, _, from, to string) error {
 }
 func (f *fakeFiles) Comment(_ context.Context, _, path, text string) error {
 	f.commented = [2]string{path, text}
+	return nil
+}
+func (f *fakeFiles) CreateFolder(_ context.Context, _, davPath string) error {
+	f.createdFolder = davPath
 	return nil
 }
 
@@ -134,6 +139,86 @@ func TestRunStopsOnNodeFailure(t *testing.T) {
 	}
 	if fGraph.taggedWith != "" {
 		t.Fatal("action node must not have run after the llm node failed")
+	}
+}
+
+func TestRunCreateFolderAction(t *testing.T) {
+	fLLM := &fakeLLM{response: "Archive"}
+	fFiles := &fakeFiles{content: "file body", name: "doc.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-2",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "llm-1", Type: "llm", Data: map[string]any{"prompt": "Classify {{file.content}}"}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "createFolder",
+					"actionParams": map[string]any{"path": "/Processed/{{llm.output}}"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "llm-1"},
+				{ID: "e2", Source: "llm-1", Target: "action-1"},
+			},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/Docs/doc.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fFiles.createdFolder != "/Processed/Archive" {
+		t.Fatalf("expected CreateFolder called with rendered path, got %q", fFiles.createdFolder)
+	}
+	actionResult := record.NodeResults[len(record.NodeResults)-1]
+	if actionResult.Output != "/Processed/Archive" {
+		t.Fatalf("expected result.Output to be the rendered path, got %v", actionResult.Output)
+	}
+}
+
+func TestRunCreateFolderActionDoesNotChangeCurrentPath(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "x", name: "x.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-3",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "createFolder",
+					"actionParams": map[string]any{"path": "/Archive/{{file.name}}"},
+				}},
+				{ID: "action-2", Type: "action", Data: map[string]any{
+					"actionType":   "tag",
+					"actionParams": map[string]any{"tag": "done"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "action-1"},
+				{ID: "e2", Source: "action-1", Target: "action-2"},
+			},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/Docs/x.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fFiles.createdFolder != "/Archive/x.txt" {
+		t.Fatalf("expected CreateFolder called with rendered path, got %q", fFiles.createdFolder)
+	}
+	// The subsequent tag action must still target the original file path, proving
+	// createFolder did not relocate currentPath.
+	if fGraph.taggedPath != "item-for-/Docs/x.txt" {
+		t.Fatalf("expected tag action to still target original file path, got %q", fGraph.taggedPath)
 	}
 }
 
