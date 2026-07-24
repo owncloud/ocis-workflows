@@ -102,6 +102,14 @@
               placeholder="/Archive"
             />
           </template>
+          <template v-else-if="node.data.actionType === 'createFolder'">
+            <oc-text-input
+              v-model="paramPath"
+              class="workflows-ndv-field"
+              :label="$gettext('Folder path')"
+              :placeholder="'/Processed/{{file.name}}'"
+            />
+          </template>
           <template v-else-if="node.data.actionType === 'rename'">
             <oc-text-input
               v-model="paramNewName"
@@ -274,6 +282,7 @@ const paramTag = actionParam('tag')
 const paramComment = actionParam('comment')
 const paramDestination = actionParam('destination')
 const paramNewName = actionParam('newName')
+const paramPath = actionParam('path')
 const paramTarget = actionParam('target')
 const paramMessage = actionParam('message')
 </script>
