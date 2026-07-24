@@ -117,6 +117,7 @@ import NodeDetailsPanel from '../components/NodeDetailsPanel.vue'
 import ExecutionsPanel from '../components/ExecutionsPanel.vue'
 import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
+import { useAutomationConnect } from '../composables/useAutomationConnect'
 import { builderPath, listPath } from '../router'
 import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY } from '../nodeTypes'
 import type { TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
@@ -127,6 +128,7 @@ const { $gettext } = useGettext()
 const route = useRoute()
 const appConfig = useAppConfig()
 const api = useWorkflowsApi(appConfig.backendUrl)
+const { connect, notifyConnected } = useAutomationConnect(api)
 const { addNodes, addEdges, fitView } = useVueFlow()
 
 const listPathHref = listPath()
@@ -225,9 +227,16 @@ const updateNodeData = (nodeId: string, data: WorkflowNodeData) => {
   }
 }
 
+const currentTriggerType = (): TriggerType => nodes.value.find((n) => n.type === 'trigger')?.data.triggerType ?? 'manual'
+
+const needsAutomation = () => {
+  const triggerType = currentTriggerType()
+  return enabled.value && (triggerType === 'schedule' || triggerType === 'event')
+}
+
 const triggerPayload = () => {
   const triggerNode = nodes.value.find((n) => n.type === 'trigger')
-  const triggerType: TriggerType = triggerNode?.data.triggerType ?? 'manual'
+  const triggerType = currentTriggerType()
   return {
     type: triggerType,
     schedule: triggerType === 'schedule' ? triggerNode?.data.schedule : undefined,
@@ -239,6 +248,15 @@ const save = async () => {
   saving.value = true
   saveError.value = ''
   try {
+    let justConnected = false
+    if (needsAutomation()) {
+      const status = await api.getAutomationStatus()
+      if (!status.connected) {
+        await connect()
+        justConnected = true
+      }
+    }
+
     const payload = {
       name: name.value,
       enabled: enabled.value,
@@ -247,9 +265,15 @@ const save = async () => {
     }
     if (isNew()) {
       const created = await api.createWorkflow(payload)
+      if (justConnected) {
+        notifyConnected()
+      }
       window.location.assign(builderPath(created.id))
     } else {
       await api.updateWorkflow(currentId(), payload)
+      if (justConnected) {
+        notifyConnected()
+      }
     }
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
