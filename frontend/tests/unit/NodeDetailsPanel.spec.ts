@@ -65,7 +65,7 @@ const extractTextNode: WorkflowNode = {
 describe('NodeDetailsPanel — Extract Text node', () => {
   it('renders an optional output-variable-override field defaulting to file.text', () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode, nodes: [], edges: [] },
+      props: { node: extractTextNode, nodes: [], edges: [], spaces: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
@@ -75,7 +75,7 @@ describe('NodeDetailsPanel — Extract Text node', () => {
 
   it('emits an update with the custom outputVariable when the field changes', async () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode, nodes: [], edges: [] },
+      props: { node: extractTextNode, nodes: [], edges: [], spaces: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
