@@ -221,6 +221,10 @@ const onPickNodeType = (typeId: string) => {
   fitViewSoon()
 
   pickerConnectFrom.value = null
+
+  // Open the new node's config modal right away instead of making the user click it
+  // again after adding it.
+  selectedNodeId.value = node.id
 }
 
 const updateNodeData = (nodeId: string, data: WorkflowNodeData) => {

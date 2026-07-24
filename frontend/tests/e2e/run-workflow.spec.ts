@@ -26,16 +26,19 @@ test('run a saved workflow and see it succeed in the executions panel', async ({
 
     await page.getByRole('button', { name: 'Add trigger' }).click()
     await page.getByRole('button', { name: 'Manual Trigger', exact: true }).click()
+    // Adding the node opens its Node Details panel automatically; nothing to configure
+    // for a manual trigger, so just close it before continuing.
+    await page.getByRole('button', { name: 'Close' }).click()
 
     await page.locator('.workflows-node-trigger .workflows-node-add-button').click()
     await page.getByRole('button', { name: 'LLM Prompt', exact: true }).click()
-    await page.locator('.workflows-node-llm').click()
+    // The LLM node's config panel is already open; configure it directly.
     await page.getByLabel('Prompt', { exact: true }).fill('Summarize {{file.content}}')
     await page.getByRole('button', { name: 'Close' }).click()
 
     await page.locator('.workflows-node-llm .workflows-node-add-button').click()
     await page.getByRole('button', { name: 'Add Tag', exact: true }).click()
-    await page.locator('.workflows-node-action').click()
+    // The action node's config panel is already open; configure it directly.
     await page.getByLabel('Tag', { exact: true }).fill('e2e-run-workflow')
     await page.getByRole('button', { name: 'Close' }).click()
 

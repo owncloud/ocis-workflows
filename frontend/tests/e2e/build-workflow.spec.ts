@@ -16,13 +16,16 @@ test('build and save a trigger -> LLM -> action workflow using the node picker',
   await page.getByRole('button', { name: 'Manual Trigger', exact: true }).click()
   await expect(page.locator('.workflows-node-trigger')).toBeVisible()
 
+  // Adding the node opens its Node Details panel automatically; nothing to configure
+  // for a manual trigger, so just close it before continuing.
+  await page.getByRole('button', { name: 'Close' }).click()
+
   // Chain an LLM step off the trigger's "+" handle.
   await page.locator('.workflows-node-trigger .workflows-node-add-button').click()
   await page.getByRole('button', { name: 'LLM Prompt', exact: true }).click()
   await expect(page.locator('.workflows-node-llm')).toBeVisible()
 
-  // Configure the LLM node via its Node Details panel.
-  await page.locator('.workflows-node-llm').click()
+  // The LLM node's config panel is already open; configure it directly.
   await page.getByLabel('Prompt', { exact: true }).fill('Summarize this file in three bullet points.')
   await page.getByRole('button', { name: 'Close' }).click()
 
@@ -30,6 +33,9 @@ test('build and save a trigger -> LLM -> action workflow using the node picker',
   await page.locator('.workflows-node-llm .workflows-node-add-button').click()
   await page.getByRole('button', { name: 'Add Tag', exact: true }).click()
   await expect(page.locator('.workflows-node-action')).toBeVisible()
+
+  // Close the action node's auto-opened config panel before continuing.
+  await page.getByRole('button', { name: 'Close' }).click()
 
   const workflowName = `e2e workflow ${Date.now()}`
   await page.getByRole('button', { name: 'Untitled workflow' }).click()

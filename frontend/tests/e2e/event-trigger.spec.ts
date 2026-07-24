@@ -14,8 +14,8 @@ test('build a workflow with a file event trigger and persist its filters', async
   await page.getByRole('button', { name: 'File Event Trigger', exact: true }).click()
   await expect(page.locator('.workflows-node-trigger')).toBeVisible()
 
-  // Configure the event trigger via its Node Details panel: event type + path filter.
-  await page.locator('.workflows-node-trigger').click()
+  // Adding the node opens its Node Details panel automatically; configure the event
+  // type + path filter directly, no extra click needed to open it.
   await page.getByLabel('Event').selectOption('move')
   await page.getByLabel('Only for files under path (optional)').fill('/Invoices')
   await page.getByRole('button', { name: 'Close' }).click()
@@ -23,6 +23,9 @@ test('build a workflow with a file event trigger and persist its filters', async
   await page.locator('.workflows-node-trigger .workflows-node-add-button').click()
   await page.getByRole('button', { name: 'LLM Prompt', exact: true }).click()
   await expect(page.locator('.workflows-node-llm')).toBeVisible()
+
+  // Close the LLM node's auto-opened config panel before continuing.
+  await page.getByRole('button', { name: 'Close' }).click()
 
   const workflowName = `e2e event trigger workflow ${Date.now()}`
   await page.getByRole('button', { name: 'Untitled workflow' }).click()
