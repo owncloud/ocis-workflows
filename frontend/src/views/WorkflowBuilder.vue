@@ -83,6 +83,9 @@
     <NodePicker
       v-if="pickerOpen"
       :allowed-categories="pickerAllowedCategories"
+      :source-node-id="pickerConnectFrom"
+      :nodes="nodes"
+      :edges="edges"
       @select="onPickNodeType"
       @close="pickerOpen = false"
     />
