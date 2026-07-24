@@ -110,6 +110,13 @@ type AutomationStatus struct {
 	ExpirationDateTime string `json:"expirationDateTime,omitempty"`
 }
 
+// Space is a simplified view of an oCIS space (drive), exposed so a trigger's event filter
+// can be scoped to one. Deliberately minimal — id and name are all a picker UI needs.
+type Space struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // Collection wraps a list response in Graph's "value" envelope.
 type Collection[T any] struct {
 	Value []T `json:"value"`
