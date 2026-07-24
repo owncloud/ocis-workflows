@@ -118,6 +118,47 @@ func TestRunTriggerLLMAction(t *testing.T) {
 	}
 }
 
+// TestActionOutputIsReferenceableDownstream proves that an action node's result is not just
+// recorded on the NodeResult but also written into the shared vars map under a
+// "<actionType>.output" key (mirroring llm.output), so a later node's {{...}} template can
+// reference what an earlier action node produced.
+func TestActionOutputIsReferenceableDownstream(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "file body", name: "doc.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-2",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-tag", Type: "action", Data: map[string]any{
+					"actionType":   "tag",
+					"actionParams": map[string]any{"tag": "reviewed"},
+				}},
+				{ID: "action-comment", Type: "action", Data: map[string]any{
+					"actionType":   "comment",
+					"actionParams": map[string]any{"comment": "applied tag: {{tag.output}}"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "action-tag"},
+				{ID: "e2", Source: "action-tag", Target: "action-comment"},
+			},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/Docs/doc.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fFiles.commented[1] != "applied tag: reviewed" {
+		t.Fatalf("expected downstream node to see the tag action's output via {{tag.output}}, got comment %q", fFiles.commented[1])
+	}
+}
+
 func TestRunStopsOnNodeFailure(t *testing.T) {
 	fLLM := &fakeLLM{err: errFakeLLM}
 	fFiles := &fakeFiles{content: "x", name: "x.txt"}

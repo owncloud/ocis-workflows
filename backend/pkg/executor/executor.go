@@ -225,6 +225,7 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = tag
+		vars["tag.output"] = tag
 		return currentPath, nil
 
 	case "comment":
@@ -236,6 +237,7 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = text
+		vars["comment.output"] = text
 		return currentPath, nil
 
 	case "move", "copy":
@@ -254,6 +256,9 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = destPath
+		// Keyed per actionType (not a single shared "action.output") so a workflow that
+		// chains both a copy and a move can still address each result independently.
+		vars[actionType+".output"] = destPath
 		if actionType == "move" {
 			currentPath = destPath
 		}
@@ -269,6 +274,7 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = destPath
+		vars["rename.output"] = destPath
 		return destPath, nil
 
 	case "notify":
@@ -281,6 +287,7 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = "sent"
+		vars["notify.output"] = "sent"
 		return currentPath, nil
 
 	default:
