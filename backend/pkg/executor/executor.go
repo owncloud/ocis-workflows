@@ -14,6 +14,7 @@ import (
 	"github.com/owncloud/ocis-workflows/pkg/llm"
 	"github.com/owncloud/ocis-workflows/pkg/model"
 	"github.com/owncloud/ocis-workflows/pkg/notify"
+	"github.com/owncloud/ocis-workflows/pkg/textextract"
 )
 
 // LLMClient completes chat prompts. Satisfied by *llm.Client.
@@ -87,6 +88,8 @@ func (e *Executor) Run(ctx context.Context, authHeader string, wf model.Workflow
 		switch node.Type {
 		case "llm":
 			err = e.runLLM(ctx, node, vars, &result)
+		case "extractText":
+			err = e.runExtractText(node, vars, &result)
 		case "action":
 			currentPath, err = e.runAction(ctx, authHeader, node, vars, currentPath, &result)
 		default:
@@ -171,6 +174,29 @@ func (e *Executor) runLLM(ctx context.Context, node model.WorkflowNode, vars map
 
 	vars["llm.output"] = output
 	result.Output = output
+	return nil
+}
+
+// runExtractText converts the triggering file's content (vars["file.content"], loaded
+// by Run for every execution that has a target resource) into plain text when it's a
+// supported binary document format (currently PDF and DOCX; see pkg/textextract for
+// what's out of scope, notably image OCR). Plain-text files pass through unchanged.
+// The result is written to vars[outputVariable] — vars["file.text"] by default, or
+// node.Data["outputVariable"] when set — so a later node (typically an LLM Prompt) can
+// reference it via {{file.text}}.
+func (e *Executor) runExtractText(node model.WorkflowNode, vars map[string]string, result *model.NodeResult) error {
+	outputVar, _ := node.Data["outputVariable"].(string)
+	if outputVar == "" {
+		outputVar = "file.text"
+	}
+
+	text, err := textextract.Extract(vars["file.name"], []byte(vars["file.content"]))
+	if err != nil {
+		return err
+	}
+
+	vars[outputVar] = text
+	result.Output = fmt.Sprintf("%d characters extracted", len(text))
 	return nil
 }
 
