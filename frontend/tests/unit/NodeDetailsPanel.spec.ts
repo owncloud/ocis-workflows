@@ -144,3 +144,85 @@ describe('NodeDetailsPanel file-source warning', () => {
     expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
   })
 })
+
+// oc-* components come from ownCloud's design system, registered globally by the host shell
+// at runtime. They aren't available in this unit test environment, so they're stubbed out —
+// we only care about the plain-HTML "Output" hint markup this panel renders itself.
+const outputHintStubs = {
+  'oc-icon': true,
+  'oc-button': true,
+  'oc-text-input': true
+}
+
+function mountOutputHintPanel(node: WorkflowNode) {
+  return mount(NodeDetailsPanel, {
+    props: { node, nodes: [], edges: [] },
+    global: {
+      plugins: [createGettext({ translations: {} })],
+      stubs: outputHintStubs
+    }
+  })
+}
+
+describe('NodeDetailsPanel output hint', () => {
+  it('shows {{llm.output}} for an LLM node', () => {
+    const node: WorkflowNode = {
+      id: 'llm-1',
+      type: 'llm',
+      position: { x: 0, y: 0 },
+      data: { prompt: 'Summarize {{file.content}}' }
+    }
+    const wrapper = mountOutputHintPanel(node)
+    const text = wrapper.text()
+    expect(text).toContain('Output')
+    expect(text).toContain('{{llm.output}}')
+  })
+
+  it('shows {{tag.output}} for a tag action node, matching the executor-wired vars key', () => {
+    const node: WorkflowNode = {
+      id: 'action-1',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'tag' }
+    }
+    const wrapper = mountOutputHintPanel(node)
+    const text = wrapper.text()
+    expect(text).toContain('Output')
+    expect(text).toContain('{{tag.output}}')
+  })
+
+  it('shows {{move.output}} for a move action node', () => {
+    const node: WorkflowNode = {
+      id: 'action-2',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'move' }
+    }
+    const wrapper = mountOutputHintPanel(node)
+    expect(wrapper.text()).toContain('{{move.output}}')
+  })
+
+  it('shows {{notify.output}} for a notify action node', () => {
+    const node: WorkflowNode = {
+      id: 'action-3',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'notify' }
+    }
+    const wrapper = mountOutputHintPanel(node)
+    expect(wrapper.text()).toContain('{{notify.output}}')
+  })
+
+  it('shows {{file.name}} and {{file.content}} for a trigger node', () => {
+    const node: WorkflowNode = {
+      id: 'trigger-1',
+      type: 'trigger',
+      position: { x: 0, y: 0 },
+      data: { triggerType: 'event', event: { type: 'upload' } }
+    }
+    const wrapper = mountOutputHintPanel(node)
+    const text = wrapper.text()
+    expect(text).toContain('{{file.name}}')
+    expect(text).toContain('{{file.content}}')
+  })
+})
