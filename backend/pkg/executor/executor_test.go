@@ -28,6 +28,7 @@ type fakeFiles struct {
 	name      string
 	moved     [2]string
 	commented [2]string
+	deleted   string
 }
 
 func (f *fakeFiles) GetContent(_ context.Context, _, _ string) ([]byte, string, error) {
@@ -43,6 +44,10 @@ func (f *fakeFiles) Copy(_ context.Context, _, from, to string) error {
 }
 func (f *fakeFiles) Comment(_ context.Context, _, path, text string) error {
 	f.commented = [2]string{path, text}
+	return nil
+}
+func (f *fakeFiles) Delete(_ context.Context, _, davPath string) error {
+	f.deleted = davPath
 	return nil
 }
 
@@ -134,6 +139,61 @@ func TestRunStopsOnNodeFailure(t *testing.T) {
 	}
 	if fGraph.taggedWith != "" {
 		t.Fatal("action node must not have run after the llm node failed")
+	}
+}
+
+func deleteThenTagWorkflow() model.WorkflowDefinition {
+	return model.WorkflowDefinition{
+		ID: "wf-delete",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-delete", Type: "action", Data: map[string]any{"actionType": "delete"}},
+				{ID: "action-tag", Type: "action", Data: map[string]any{
+					"actionType":   "tag",
+					"actionParams": map[string]any{"tag": "irrelevant"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "action-delete"},
+				{ID: "e2", Source: "action-delete", Target: "action-tag"},
+			},
+		},
+	}
+}
+
+func TestRunDeleteAction(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "x", name: "doc.txt"}
+	fGraph := &fakeGraph{}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", deleteThenTagWorkflow(), "manual", "/Docs/doc.txt")
+
+	if record.Status != "failed" {
+		t.Fatalf("expected status failed (subsequent tag action has no file), got %s", record.Status)
+	}
+	if fFiles.deleted != "/Docs/doc.txt" {
+		t.Fatalf("expected Delete called with /Docs/doc.txt, got %q", fFiles.deleted)
+	}
+	if len(record.NodeResults) != 2 {
+		t.Fatalf("expected 2 node results (delete + failed tag), got %d", len(record.NodeResults))
+	}
+
+	deleteResult := record.NodeResults[0]
+	if deleteResult.NodeID != "action-delete" || deleteResult.Status != "succeeded" {
+		t.Fatalf("unexpected delete node result: %+v", deleteResult)
+	}
+	if deleteResult.Output != "/Docs/doc.txt" {
+		t.Fatalf("expected delete result.Output to be the deleted path, got %q", deleteResult.Output)
+	}
+
+	tagResult := record.NodeResults[1]
+	if tagResult.Status != "failed" {
+		t.Fatalf("expected tag action after delete to fail (currentPath now empty), got status %q", tagResult.Status)
+	}
+	if tagResult.Error == nil || tagResult.Error.Message == "" {
+		t.Fatalf("expected a no-target-file error on the tag node, got %+v", tagResult.Error)
 	}
 }
 
