@@ -46,6 +46,41 @@ describe('useWorkflowsApi', () => {
     )
   })
 
+  it('fetches the webhook token/URL and combines the path with the non-API base URL', async () => {
+    ;(fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'abc123', path: '/hooks/wf-1/abc123' })
+    })
+
+    const api = useWorkflowsApi('https://example.test/workflows/api/v1beta1')
+    const info = await api.getWebhookToken('wf-1')
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://example.test/workflows/api/v1beta1/me/workflows/wf-1/webhook-token',
+      expect.anything()
+    )
+    expect(info).toEqual({ token: 'abc123', url: 'https://example.test/workflows/hooks/wf-1/abc123' })
+  })
+
+  it('rotates the webhook token via POST and returns the new token/URL', async () => {
+    ;(fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'rotated', path: '/hooks/wf-1/rotated' })
+    })
+
+    const api = useWorkflowsApi('https://example.test/workflows/api/v1beta1')
+    const info = await api.rotateWebhookToken('wf-1')
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://example.test/workflows/api/v1beta1/me/workflows/wf-1/webhook-token/rotate',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(info.token).toBe('rotated')
+    expect(info.url).toBe('https://example.test/workflows/hooks/wf-1/rotated')
+  })
+
   it('throws a WorkflowsApiError shaped from the Graph-style error envelope', async () => {
     ;(fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: false,

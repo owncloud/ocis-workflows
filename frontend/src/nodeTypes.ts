@@ -54,6 +54,15 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     defaultData: { label: 'File event', triggerType: 'event', event: { type: 'upload' } }
   },
   {
+    id: 'trigger-webhook',
+    nodeKind: 'trigger',
+    label: 'Webhook Trigger',
+    description: 'Runs when an external request hits a per-workflow URL',
+    icon: 'link',
+    category: TRIGGER_CATEGORY,
+    defaultData: { label: 'Webhook', triggerType: 'webhook' }
+  },
+  {
     id: 'llm',
     nodeKind: 'llm',
     label: 'LLM Prompt',
