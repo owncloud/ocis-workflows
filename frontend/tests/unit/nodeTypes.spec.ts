@@ -51,3 +51,25 @@ describe('nodeTypes', () => {
     expect(found?.nodeKind).toBe('extractText')
   })
 })
+
+describe('nodeTypes - Share File action', () => {
+  it('registers an action-share node type under the Actions category', () => {
+    const shareType = findNodeType('action-share')
+
+    expect(shareType).toBeDefined()
+    expect(shareType?.nodeKind).toBe('action')
+    expect(shareType?.actionType).toBe('share')
+    expect(shareType?.category).toBe(ACTION_CATEGORY)
+    expect(shareType?.defaultData.actionType).toBe('share')
+  })
+
+  it('is findable by its action discriminator, like the other action node types', () => {
+    const found = findNodeTypeForNode('action', 'share')
+    expect(found?.id).toBe('action-share')
+  })
+
+  it('only registers action-share once', () => {
+    const matches = NODE_TYPES.filter((t) => t.id === 'action-share')
+    expect(matches).toHaveLength(1)
+  })
+})
