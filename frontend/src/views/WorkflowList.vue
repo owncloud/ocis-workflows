@@ -3,16 +3,14 @@
     <div class="workflows-list-header">
       <h1>{{ $gettext('Workflows') }}</h1>
       <div class="workflows-list-header-actions">
-        <span class="workflows-automation-status">
-          <span
-            class="workflows-status-pill"
-            :class="automationConnected ? 'is-active' : 'is-inactive'"
-          >
-            {{ automationConnected ? $gettext('Automation connected') : $gettext('Automation not connected') }}
-          </span>
-          <oc-button appearance="raw" :disabled="automationBusy" @click="toggleAutomation">
-            {{ automationConnected ? $gettext('Disconnect automation') : $gettext('Connect automation') }}
-          </oc-button>
+        <span v-if="automationConnected" class="workflows-automation-status">
+          {{ $gettext('Background execution active') }}
+          <button type="button" class="workflows-automation-manage-link" @click="automationPanelOpen = true">
+            {{ $gettext('manage') }}
+          </button>
+        </span>
+        <span v-else-if="hasAutomatedWorkflows" class="workflows-automation-status is-inactive">
+          {{ $gettext('Background execution off') }}
         </span>
         <oc-button variation="primary" @click="createNew">
           {{ $gettext('Add workflow') }}
@@ -57,27 +55,47 @@
         </tr>
       </tbody>
     </table>
+
+    <AutomationPanel
+      v-if="automationPanelOpen"
+      :backend-url="appConfig.backendUrl"
+      :automated-workflow-count="automatedWorkflowCount"
+      :expiration-date-time="automationExpiresAt"
+      @close="automationPanelOpen = false"
+      @disconnected="onAutomationDisconnected"
+    />
   </main>
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
+import { useAutomationConnect } from '../composables/useAutomationConnect'
 import { builderPath } from '../router'
+import AutomationPanel from '../components/AutomationPanel.vue'
 import type { WorkflowDefinition } from '../types/workflow'
 
 const { $gettext } = useGettext()
 const appConfig = useAppConfig()
 const api = useWorkflowsApi(appConfig.backendUrl)
+const { connectWithNotice } = useAutomationConnect(api)
 
 const workflows = ref<WorkflowDefinition[]>([])
 const loading = ref(true)
 const loadError = ref('')
 const automationConnected = ref(false)
-const automationBusy = ref(false)
+const automationExpiresAt = ref('')
 const automationError = ref('')
+const automationPanelOpen = ref(false)
+
+const hasAutomatedWorkflows = computed(() =>
+  workflows.value.some((w) => w.enabled && (w.trigger.type === 'schedule' || w.trigger.type === 'event'))
+)
+const automatedWorkflowCount = computed(
+  () => workflows.value.filter((w) => w.enabled && (w.trigger.type === 'schedule' || w.trigger.type === 'event')).length
+)
 
 const load = async () => {
   loading.value = true
@@ -95,27 +113,32 @@ const loadAutomationStatus = async () => {
   try {
     const status = await api.getAutomationStatus()
     automationConnected.value = status.connected
+    automationExpiresAt.value = status.expirationDateTime ?? ''
   } catch (e) {
     automationError.value = e instanceof Error ? e.message : String(e)
   }
 }
 
-const toggleAutomation = async () => {
-  automationBusy.value = true
-  automationError.value = ''
+// Self-heals installs where a schedule/event workflow is active but automation isn't
+// connected (e.g. after a manual disconnect, or a lapsed credential) — silently reconnects
+// rather than showing a dead-end "off" state with no way to fix it.
+const reconcileAutomation = async () => {
+  if (automationConnected.value || !hasAutomatedWorkflows.value) {
+    return
+  }
   try {
-    if (automationConnected.value) {
-      await api.disconnectAutomation()
-      automationConnected.value = false
-    } else {
-      const status = await api.connectAutomation()
-      automationConnected.value = status.connected
-    }
+    const status = await connectWithNotice()
+    automationConnected.value = status.connected
+    automationExpiresAt.value = status.expirationDateTime ?? ''
   } catch (e) {
     automationError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    automationBusy.value = false
   }
+}
+
+const onAutomationDisconnected = () => {
+  automationConnected.value = false
+  automationExpiresAt.value = ''
+  automationPanelOpen.value = false
 }
 
 const createNew = () => {
@@ -129,9 +152,9 @@ const remove = async (id: string) => {
 
 const formatDate = (iso: string) => new Date(iso).toLocaleString()
 
-onMounted(() => {
-  load()
-  loadAutomationStatus()
+onMounted(async () => {
+  await Promise.all([load(), loadAutomationStatus()])
+  await reconcileAutomation()
 })
 </script>
 
@@ -150,7 +173,22 @@ onMounted(() => {
 .workflows-automation-status {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+.workflows-automation-status.is-inactive {
+  color: #b3261e;
+  opacity: 1;
+}
+.workflows-automation-manage-link {
+  border: none;
+  background: transparent;
+  color: var(--oc-color-swatch-brand-default, #1a5fb4);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
 }
 .workflows-list-empty {
   opacity: 0.7;
