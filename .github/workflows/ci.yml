@@ -141,7 +141,11 @@ jobs:
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
 
       - name: Start dev stack
-        run: docker compose up -d
+        env:
+          LLM_ENDPOINT: http://fake-llm:8080/v1
+          LLM_MODEL: fake-model
+          LLM_API_KEY: ''
+        run: docker compose --profile test up -d
 
       - name: Wait for oCIS
         run: |
@@ -170,8 +174,8 @@ jobs:
 
       - name: Dump stack logs on failure
         if: failure()
-        run: docker compose logs
+        run: docker compose --profile test logs
 
       - name: Tear down dev stack
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile test down -v

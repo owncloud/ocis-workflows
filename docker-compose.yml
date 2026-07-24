@@ -42,12 +42,11 @@ services:
     environment:
       WORKFLOWS_OCIS_URL: https://host.docker.internal:9200
       WORKFLOWS_OCIS_INSECURE: 'true'
-      # Defaults to the fake-llm fixture below, so the stack (and its e2e tests) never
-      # depend on a real LLM provider being reachable. Set LLM_ENDPOINT/LLM_MODEL/
-      # LLM_API_KEY to point at a real one (e.g. Ollama on the host, or a hosted API).
-      WORKFLOWS_LLM_ENDPOINT: ${LLM_ENDPOINT:-http://fake-llm:8080/v1}
-      WORKFLOWS_LLM_MODEL: ${LLM_MODEL:-fake-model}
-      WORKFLOWS_LLM_API_KEY: ${LLM_API_KEY:-}
+      # Defaults to Ollama running on the host. Override LLM_ENDPOINT/LLM_MODEL/
+      # LLM_API_KEY to point at a different Ollama model or a hosted API instead.
+      WORKFLOWS_LLM_ENDPOINT: ${LLM_ENDPOINT:-http://host.docker.internal:11434/v1}
+      WORKFLOWS_LLM_MODEL: ${LLM_MODEL:-llama3.2}
+      WORKFLOWS_LLM_API_KEY: ${LLM_API_KEY:-ollama}
       WORKFLOWS_HTTP_ADDR: 0.0.0.0:9105
       WORKFLOWS_DEBUG_ADDR: 0.0.0.0:9109
       WORKFLOWS_ALLOWED_ORIGIN: https://host.docker.internal:9200
@@ -67,9 +66,12 @@ services:
       traefik.http.middlewares.workflows-backend-stripprefix.stripprefix.prefixes: /workflows
     depends_on:
       - traefik
-      - fake-llm
 
+  # Deterministic LLM stand-in for e2e/CI runs, so they don't depend on a real model being
+  # installed. Only starts with --profile test; pair it with LLM_ENDPOINT/LLM_MODEL/
+  # LLM_API_KEY pointed at it (see backend/tests/e2e/main_test.go).
   fake-llm:
+    profiles: [test]
     build:
       context: ./backend
       dockerfile: ../docker/Dockerfile
