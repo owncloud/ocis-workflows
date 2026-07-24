@@ -122,6 +122,16 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     defaultData: { actionType: 'rename' }
   },
   {
+    id: 'action-share',
+    nodeKind: 'action',
+    actionType: 'share',
+    label: 'Share File',
+    description: 'Grant a user or group access to the file',
+    icon: 'share-forward',
+    category: ACTION_CATEGORY,
+    defaultData: { actionType: 'share' }
+  },
+  {
     id: 'action-notify',
     nodeKind: 'action',
     actionType: 'notify',
