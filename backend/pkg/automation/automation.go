@@ -41,7 +41,7 @@ func New(graph GraphClient, db *localdb.DB, log *slog.Logger) *Service {
 }
 
 func toStatus(a *localdb.Automation) *model.AutomationStatus {
-	if a == nil {
+	if a == nil || a.ExpiresAt.Before(time.Now()) {
 		return &model.AutomationStatus{Connected: false}
 	}
 	return &model.AutomationStatus{
