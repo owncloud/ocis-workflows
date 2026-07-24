@@ -128,7 +128,7 @@ const { $gettext } = useGettext()
 const route = useRoute()
 const appConfig = useAppConfig()
 const api = useWorkflowsApi(appConfig.backendUrl)
-const { connectWithNotice } = useAutomationConnect(api)
+const { connect, notifyConnected } = useAutomationConnect(api)
 const { addNodes, addEdges, fitView } = useVueFlow()
 
 const listPathHref = listPath()
@@ -248,10 +248,12 @@ const save = async () => {
   saving.value = true
   saveError.value = ''
   try {
+    let justConnected = false
     if (needsAutomation()) {
       const status = await api.getAutomationStatus()
       if (!status.connected) {
-        await connectWithNotice()
+        await connect()
+        justConnected = true
       }
     }
 
@@ -263,9 +265,15 @@ const save = async () => {
     }
     if (isNew()) {
       const created = await api.createWorkflow(payload)
+      if (justConnected) {
+        notifyConnected()
+      }
       window.location.assign(builderPath(created.id))
     } else {
       await api.updateWorkflow(currentId(), payload)
+      if (justConnected) {
+        notifyConnected()
+      }
     }
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
