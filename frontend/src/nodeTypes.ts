@@ -16,7 +16,14 @@ export interface NodeTypeDefinition {
 
 export const TRIGGER_CATEGORY = 'Triggers'
 export const AI_CATEGORY = 'AI'
+// File-manipulation actions only (tag, comment, move, copy, rename): things that mutate the
+// file itself. "Send Notification" is deliberately kept out of this bucket — see
+// NOTIFICATION_CATEGORY below — because it doesn't touch the file at all, it sends a message
+// to an external destination (Slack, email, a webhook, ...). Grouping it with file operations
+// made the "Actions" picker section read as "everything that isn't AI", which stops being a
+// useful scanning aid as more node types are added.
 export const ACTION_CATEGORY = 'Actions'
+export const NOTIFICATION_CATEGORY = 'Notifications'
 
 export const NODE_TYPES: NodeTypeDefinition[] = [
   {
@@ -112,7 +119,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     label: 'Send Notification',
     description: 'Send a notification to Slack, email, or 100+ other services',
     icon: 'notification-3',
-    category: ACTION_CATEGORY,
+    category: NOTIFICATION_CATEGORY,
     defaultData: { actionType: 'notify' }
   }
 ]
