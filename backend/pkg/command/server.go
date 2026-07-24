@@ -35,6 +35,11 @@ const scheduleTickInterval = 10 * time.Second
 // active event-trigger consumer.
 const sseReconcileInterval = 30 * time.Second
 
+// renewalTickInterval controls how often the automation service checks for app-passwords
+// nearing expiry. Daily is frequent enough given the 14-day renewal window and 90-day
+// credential lifetime.
+const renewalTickInterval = 24 * time.Hour
+
 // RunServer starts the public API server, the debug server, and the background schedule
 // evaluator, and blocks until any of them exits or the process receives an interrupt/
 // termination signal.
@@ -106,6 +111,12 @@ func RunServer(cfg config.Config) error {
 	g.Go(func() error {
 		log.Info("starting sse event-trigger manager", "reconcileInterval", sseReconcileInterval)
 		sseManager.Start(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		log.Info("starting automation renewal loop", "interval", renewalTickInterval)
+		automationService.StartRenewalLoop(gCtx, renewalTickInterval)
 		return nil
 	})
 
