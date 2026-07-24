@@ -5,7 +5,7 @@
       <div class="workflows-executions-header">
         <h2>{{ $gettext('Executions') }}</h2>
         <oc-button appearance="raw" :aria-label="$gettext('Close')" @click="$emit('close')">
-          <oc-icon name="close-line" />
+          <oc-icon name="close" fill-type="line" />
         </oc-button>
       </div>
 

@@ -8,7 +8,7 @@
     @keydown.space.prevent="$emit('configure')"
   >
     <Handle type="target" :position="Position.Left" />
-    <oc-icon :name="nodeType?.icon ?? 'flashlight-line'" />
+    <oc-icon :name="nodeType?.icon ?? 'flashlight'" fill-type="line" />
     <div class="workflows-node-card-text">
       <span class="workflows-node-card-title">{{ nodeType?.label ?? $gettext('Action') }}</span>
       <span class="workflows-node-card-subtitle">{{ subtitle }}</span>

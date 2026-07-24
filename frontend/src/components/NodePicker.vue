@@ -5,7 +5,7 @@
       <div class="workflows-picker-header">
         <h2>{{ $gettext('What happens next?') }}</h2>
         <oc-button appearance="raw" :aria-label="$gettext('Close')" @click="$emit('close')">
-          <oc-icon name="close-line" />
+          <oc-icon name="close" fill-type="line" />
         </oc-button>
       </div>
       <oc-text-input
@@ -26,7 +26,7 @@
                 :aria-label="item.label"
                 @click="$emit('select', item.id)"
               >
-                <oc-icon :name="item.icon" />
+                <oc-icon :name="item.icon" fill-type="line" />
                 <span class="workflows-picker-item-text">
                   <span class="workflows-picker-item-label">{{ item.label }}</span>
                   <span class="workflows-picker-item-description">{{ item.description }}</span>

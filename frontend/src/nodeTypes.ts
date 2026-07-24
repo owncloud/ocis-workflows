@@ -24,7 +24,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     nodeKind: 'trigger',
     label: 'Manual Trigger',
     description: 'Runs only when you click "Run now"',
-    icon: 'play-circle-line',
+    icon: 'play-circle',
     category: TRIGGER_CATEGORY,
     defaultData: { label: 'Manual', triggerType: 'manual' }
   },
@@ -33,7 +33,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     nodeKind: 'trigger',
     label: 'Schedule Trigger',
     description: 'Runs on a recurring schedule',
-    icon: 'time-line',
+    icon: 'time',
     category: TRIGGER_CATEGORY,
     defaultData: { label: 'Schedule', triggerType: 'schedule', schedule: '0 * * * *' }
   },
@@ -42,7 +42,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     nodeKind: 'trigger',
     label: 'File Event Trigger',
     description: 'Runs when a file is uploaded, moved, shared, or locked',
-    icon: 'flashlight-line',
+    icon: 'flashlight',
     category: TRIGGER_CATEGORY,
     defaultData: { label: 'File event', triggerType: 'event', event: { type: 'upload' } }
   },
@@ -51,7 +51,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     nodeKind: 'llm',
     label: 'LLM Prompt',
     description: 'Ask an LLM to summarize, classify, or transform the file',
-    icon: 'chat-3-line',
+    icon: 'chat-3',
     category: AI_CATEGORY,
     defaultData: { prompt: '' }
   },
@@ -61,7 +61,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'tag',
     label: 'Add Tag',
     description: 'Add a tag to the file',
-    icon: 'price-tag-3-line',
+    icon: 'price-tag-3',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'tag' }
   },
@@ -71,7 +71,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'comment',
     label: 'Add Comment',
     description: 'Add a comment to the file',
-    icon: 'chat-1-line',
+    icon: 'chat-1',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'comment' }
   },
@@ -81,7 +81,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'move',
     label: 'Move File',
     description: 'Move the file to another location',
-    icon: 'folder-transfer-line',
+    icon: 'folder-transfer',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'move' }
   },
@@ -91,7 +91,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'copy',
     label: 'Copy File',
     description: 'Copy the file to another location',
-    icon: 'file-copy-line',
+    icon: 'file-copy',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'copy' }
   },
@@ -101,7 +101,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'rename',
     label: 'Rename File',
     description: 'Rename the file',
-    icon: 'edit-line',
+    icon: 'edit',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'rename' }
   },
@@ -111,7 +111,7 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     actionType: 'notify',
     label: 'Send Notification',
     description: 'Send a notification to Slack, email, or 100+ other services',
-    icon: 'notification-3-line',
+    icon: 'notification-3',
     category: ACTION_CATEGORY,
     defaultData: { actionType: 'notify' }
   }

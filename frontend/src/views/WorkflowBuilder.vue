@@ -2,7 +2,7 @@
   <div class="workflows-builder">
     <div class="workflows-builder-topbar">
       <a :href="listPathHref" class="workflows-builder-back" :aria-label="$gettext('Back to workflows')">
-        <oc-icon name="arrow-left-line" />
+        <oc-icon name="arrow-left" fill-type="line" />
       </a>
 
       <input
