@@ -14,14 +14,7 @@
       <span class="workflows-node-card-subtitle">{{ subtitle }}</span>
     </div>
     <Handle type="source" :position="Position.Right" />
-    <button
-      type="button"
-      class="workflows-node-add-button"
-      :aria-label="$gettext('Add next step')"
-      @click.stop="$emit('add-next')"
-    >
-      +
-    </button>
+    <NodeAddButton @add-next="$emit('add-next')" />
   </div>
 </template>
 
@@ -29,6 +22,7 @@
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useGettext } from 'vue3-gettext'
+import NodeAddButton from './NodeAddButton.vue'
 import type { WorkflowNodeData } from '../../types/workflow'
 
 const props = defineProps<{ id: string; data: WorkflowNodeData }>()

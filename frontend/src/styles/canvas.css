@@ -37,13 +37,28 @@
   text-overflow: ellipsis;
   max-width: 180px;
 }
+/*
+ * Anchored the same way Vue Flow anchors its own connection handle
+ * (.vue-flow__handle-right: right: 0; top: 50%; transform: translate(50%, -50%)) so the
+ * "+" button straddles the card's right edge at exactly the same point as the handle,
+ * regardless of a node's border-radius (e.g. the trigger's pill-shaped left corners
+ * don't affect the right edge, but anchoring to the handle's own point rather than an
+ * arbitrary fixed offset keeps the two coordinated even if that ever changes) or width.
+ * It paints after the Handle in the DOM, so it visually sits on top of the small handle
+ * dot instead of floating a fixed 28px away from it, giving one clear affordance instead
+ * of two dis-connected circles.
+ */
 .workflows-node-add-button {
   position: absolute;
-  right: -28px;
+  right: 0;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid var(--oc-color-border, #ccc);
   background: var(--oc-color-swatch-brand-contrastText, #fff);
