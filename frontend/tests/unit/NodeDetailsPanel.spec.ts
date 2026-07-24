@@ -8,7 +8,7 @@ const gettext = createGettext({ availableLanguages: { en: 'English' }, defaultLa
 
 const mountPanel = (node: WorkflowNode, nodes: WorkflowNode[] = [], edges: WorkflowEdge[] = []) =>
   mount(NodeDetailsPanel, {
-    props: { node, nodes, edges },
+    props: { node, nodes, edges, spaces: [] },
     global: {
       plugins: [gettext]
     }

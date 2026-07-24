@@ -50,6 +50,11 @@
               :label="$gettext('Only for files under path (optional)')"
               placeholder="/Invoices"
             />
+            <label class="workflows-ndv-label" for="ndv-event-space">{{ $gettext('Space (optional)') }}</label>
+            <select id="ndv-event-space" v-model="eventSpaceId" class="workflows-ndv-select">
+              <option value="">{{ $gettext('Any space') }}</option>
+              <option v-for="space in spaces" :key="space.id" :value="space.id">{{ space.name }}</option>
+            </select>
           </template>
         </template>
 
@@ -150,9 +155,9 @@ import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { findNodeTypeForNode } from '../nodeTypes'
 import { hasUpstreamFileSource, isFileDependentActionType } from '../utils/flowValidation'
-import type { EventTriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
+import type { EventTriggerType, Space, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
-const props = defineProps<{ node: WorkflowNode; nodes: WorkflowNode[]; edges: WorkflowEdge[] }>()
+const props = defineProps<{ node: WorkflowNode; nodes: WorkflowNode[]; edges: WorkflowEdge[]; spaces: Space[] }>()
 const emit = defineEmits<{ (e: 'update', data: WorkflowNodeData): void; (e: 'close'): void }>()
 const { $gettext } = useGettext()
 
@@ -191,6 +196,16 @@ const eventPathPrefix = computed<string>({
       event: {
         type: props.node.data.event?.type ?? 'upload',
         filters: { ...props.node.data.event?.filters, pathPrefix: value }
+      }
+    })
+})
+const eventSpaceId = computed<string>({
+  get: () => props.node.data.event?.filters?.spaceId ?? '',
+  set: (value) =>
+    patch({
+      event: {
+        type: props.node.data.event?.type ?? 'upload',
+        filters: { ...props.node.data.event?.filters, spaceId: value }
       }
     })
 })
