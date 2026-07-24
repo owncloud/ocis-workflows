@@ -144,3 +144,64 @@ describe('NodeDetailsPanel file-source warning', () => {
     expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
   })
 })
+
+describe('NodeDetailsPanel — condition node fields', () => {
+  it('renders left/operator/right fields for a condition node', () => {
+    const wrapper = mountPanel({
+      id: 'cond-1',
+      type: 'condition',
+      position: { x: 0, y: 0 },
+      data: { left: '{{llm.output}}', operator: 'contains', right: 'invoice' }
+    })
+
+    expect(wrapper.find('#ndv-condition-operator').exists()).toBe(true)
+    const optionValues = wrapper.findAll('#ndv-condition-operator option').map((o) => o.attributes('value'))
+    expect(optionValues).toEqual(['equals', 'notEquals', 'contains', 'notContains', 'matches'])
+    expect(wrapper.html()).toContain('Left value')
+    expect(wrapper.html()).toContain('Right value')
+  })
+
+  it('does not render condition fields for a non-condition node', () => {
+    const wrapper = mountPanel({
+      id: 'action-1',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'tag' }
+    })
+    expect(wrapper.find('#ndv-condition-operator').exists()).toBe(false)
+  })
+
+  it('hides the generic legacy "Run only if" field on a condition node itself', () => {
+    const conditionWrapper = mountPanel({
+      id: 'cond-1',
+      type: 'condition',
+      position: { x: 0, y: 0 },
+      data: { left: '', operator: 'equals', right: '' }
+    })
+    expect(conditionWrapper.html()).not.toContain('Run only if')
+
+    const actionWrapper = mountPanel({
+      id: 'action-1',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'tag' }
+    })
+    expect(actionWrapper.html()).toContain('Run only if')
+  })
+
+  it('emits an updated operator when the select changes', async () => {
+    const wrapper = mountPanel({
+      id: 'cond-1',
+      type: 'condition',
+      position: { x: 0, y: 0 },
+      data: { left: '{{llm.output}}', operator: 'equals', right: 'invoice' }
+    })
+
+    await wrapper.find('#ndv-condition-operator').setValue('matches')
+
+    const emitted = wrapper.emitted('update')
+    expect(emitted).toBeTruthy()
+    const lastPatch = emitted![emitted!.length - 1][0]
+    expect(lastPatch).toMatchObject({ left: '{{llm.output}}', operator: 'matches', right: 'invoice' })
+  })
+})

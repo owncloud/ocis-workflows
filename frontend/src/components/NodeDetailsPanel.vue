@@ -128,7 +128,32 @@
           </template>
         </template>
 
+        <template v-else-if="node.type === 'condition'">
+          <oc-text-input
+            v-model="conditionLeft"
+            class="workflows-ndv-field"
+            :label="$gettext('Left value')"
+            placeholder="{{llm.output}}"
+          />
+          <label class="workflows-ndv-label" for="ndv-condition-operator">{{ $gettext('Operator') }}</label>
+          <select id="ndv-condition-operator" v-model="conditionOperator" class="workflows-ndv-select">
+            <option value="equals">{{ $gettext('Equals') }}</option>
+            <option value="notEquals">{{ $gettext('Does not equal') }}</option>
+            <option value="contains">{{ $gettext('Contains') }}</option>
+            <option value="notContains">{{ $gettext('Does not contain') }}</option>
+            <option value="matches">{{ $gettext('Matches regex') }}</option>
+          </select>
+          <oc-text-input
+            v-model="conditionRight"
+            class="workflows-ndv-field"
+            :label="$gettext('Right value')"
+            :description-message="$gettext('A literal to compare against (also rendered as a template)')"
+            placeholder="invoice"
+          />
+        </template>
+
         <oc-text-input
+          v-if="node.type !== 'condition'"
           v-model="condition"
           class="workflows-ndv-field"
           :label="$gettext('Run only if (optional condition)')"
@@ -179,6 +204,9 @@ const prompt = field('prompt')
 const model = field('model')
 const outputVariable = field('outputVariable')
 const condition = field('condition')
+const conditionLeft = field('left')
+const conditionOperator = field('operator')
+const conditionRight = field('right')
 
 const eventType = computed<EventTriggerType>({
   get: () => props.node.data.event?.type ?? 'upload',
