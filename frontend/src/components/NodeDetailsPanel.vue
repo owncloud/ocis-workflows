@@ -3,10 +3,10 @@
   <div class="workflows-ndv-overlay" @click.self="$emit('close')" @keydown.esc="$emit('close')">
     <div class="workflows-ndv" role="dialog" aria-modal="true" :aria-label="nodeType?.label">
       <div class="workflows-ndv-header">
-        <oc-icon v-if="nodeType" :name="nodeType.icon" />
+        <oc-icon v-if="nodeType" :name="nodeType.icon" fill-type="line" />
         <h2>{{ nodeType?.label ?? node.type }}</h2>
         <oc-button appearance="raw" :aria-label="$gettext('Close')" @click="$emit('close')">
-          <oc-icon name="close-line" />
+          <oc-icon name="close" fill-type="line" />
         </oc-button>
       </div>
       <p v-if="nodeType" class="workflows-ndv-description">{{ nodeType.description }}</p>

@@ -7,7 +7,7 @@
     @keydown.enter="$emit('configure')"
     @keydown.space.prevent="$emit('configure')"
   >
-    <oc-icon :name="nodeType?.icon ?? 'play-circle-line'" />
+    <oc-icon :name="nodeType?.icon ?? 'play-circle'" fill-type="line" />
     <div class="workflows-node-card-text">
       <span class="workflows-node-card-title">{{ nodeType?.label ?? $gettext('Trigger') }}</span>
       <span class="workflows-node-card-subtitle">{{ subtitle }}</span>

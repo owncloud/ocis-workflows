@@ -8,7 +8,7 @@
     @keydown.space.prevent="$emit('configure')"
   >
     <Handle type="target" :position="Position.Left" />
-    <oc-icon name="chat-3-line" />
+    <oc-icon name="chat-3" fill-type="line" />
     <div class="workflows-node-card-text">
       <span class="workflows-node-card-title">{{ $gettext('LLM Prompt') }}</span>
       <span class="workflows-node-card-subtitle">{{ subtitle }}</span>
