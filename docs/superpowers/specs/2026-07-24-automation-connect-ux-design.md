@@ -152,14 +152,24 @@ Backend unit tests for the new renewal job:
 
 ## Risks / open questions
 
-- This assumes oCIS's `/auth-app/tokens` endpoint accepts Basic auth with an
-  existing app-password as authorization to mint a new one for that same
-  user — the scheduler already relies on app-password Basic auth being valid
-  for Graph/WebDAV calls (`scheduler.go:136`), but we have not specifically
-  confirmed the auth-app endpoint itself accepts it rather than requiring an
-  OIDC bearer token. Needs verification against the target oCIS version early
-  in implementation; if unsupported, renewal would have to fall back to
-  something session-dependent again.
+- **Verified** (2026-07-24, against `owncloud/ocis-rolling:latest`, the image
+  this project targets): an app-password used via Basic auth can successfully
+  mint a new app-password at `POST /auth-app/tokens` — confirmed both by
+  reading the source (`services/auth-app/pkg/service/service.go` only checks
+  for an authenticated user, never how; `pkg/auth/manager/appauth/appauth.go`
+  in reva carries forward the original app-password's `TokenScope`, which is
+  `owner` scope since our `Connect` mints with `scope.AddOwnerScope`) and by
+  empirically minting a token with real credentials, then using it over Basic
+  auth to mint a second one (`200 OK` both times). Self-renewal as designed
+  in section 3 is viable.
+- Also observed during verification: `DELETE /auth-app/tokens` returned `500`
+  in this environment regardless of auth method used (real password or
+  app-password) — appears to be a pre-existing bug/quirk in this oCIS build,
+  not something this design introduces. The existing `Disconnect` code
+  already treats revoke failure as non-fatal and forgets the credential
+  locally anyway (`automation.go:112`); the self-renewal job's "revoke the
+  old token after minting a new one" step should follow the same
+  log-and-continue pattern rather than treating revoke failure as fatal.
 - The renewal job needs a place to run periodically — likely the same process
   hosting the existing scheduler, on its own ticker, rather than new
   infrastructure. Implementation should confirm this fits the current process
