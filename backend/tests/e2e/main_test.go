@@ -2,9 +2,11 @@
 
 // Package e2e contains black-box tests that call this backend's real HTTP API over the
 // network (through Traefik, exactly as a real client would) against a real, running
-// docker-compose stack — no mocks anywhere in the request path. Run via:
+// docker-compose stack — no mocks anywhere in the request path. The stack defaults to a
+// real Ollama instance on the host for its LLM node, so for deterministic runs (no model
+// required) start it against the fake-llm fixture instead:
 //
-//	docker compose up -d
+//	LLM_ENDPOINT=http://fake-llm:8080/v1 LLM_MODEL=fake-model LLM_API_KEY= docker compose --profile test up -d
 //	go test -tags=e2e ./tests/e2e/...
 //
 // Getting a real oCIS bearer token requires a real login: oCIS's built-in IdP sign-in page

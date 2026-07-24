@@ -117,9 +117,9 @@ func fileTags(t *testing.T, token, davPath string) string {
 }
 
 // TestRunManualWorkflowAppliesRealTag runs a full trigger -> llm -> tag graph through the
-// real API against a real oCIS instance (backed by the fake-llm fixture, not a real LLM
-// provider — see docker-compose.yml) and asserts the tag actually landed on the file, by
-// reading it back over WebDAV. No component of this path is mocked.
+// real API against a real oCIS instance (see docker-compose.yml for the LLM provider setup,
+// e.g. the deterministic fake-llm fixture used in CI) and asserts the tag actually landed
+// on the file, by reading it back over WebDAV. No component of this path is mocked.
 func TestRunManualWorkflowAppliesRealTag(t *testing.T) {
 	token := testToken(t)
 

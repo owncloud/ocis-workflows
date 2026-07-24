@@ -71,6 +71,15 @@ pnpm test:e2e                                   # e2e, requires the stack above 
 Every feature or fix in this repo ships with e2e coverage on both the backend and frontend,
 driven against the real docker-compose stack rather than mocks.
 
+The stack above defaults to a real LLM endpoint (Ollama), so e2e runs against it depend on a
+model being installed and are non-deterministic. For CI-equivalent, deterministic e2e runs
+that don't need a real model, start the stack with the `test` profile instead, which swaps in
+a fake LLM fixture:
+
+```bash
+LLM_ENDPOINT=http://fake-llm:8080/v1 LLM_MODEL=fake-model LLM_API_KEY= docker compose --profile test up -d
+```
+
 ### Production Build
 
 ```bash
