@@ -49,6 +49,11 @@ func (f *fakeFiles) Comment(_ context.Context, _, path, text string) error {
 type fakeGraph struct {
 	taggedPath string
 	taggedWith string
+
+	sharedItemID string
+	sharedWith   string
+	sharedRole   string
+	shareErr     error
 }
 
 func (f *fakeGraph) ResolveItemID(_ context.Context, _, davPath string) (string, error) {
@@ -57,6 +62,15 @@ func (f *fakeGraph) ResolveItemID(_ context.Context, _, davPath string) (string,
 func (f *fakeGraph) AssignTag(_ context.Context, _, itemID, tag string) error {
 	f.taggedPath = itemID
 	f.taggedWith = tag
+	return nil
+}
+func (f *fakeGraph) Share(_ context.Context, _, itemID, recipient, role string) error {
+	if f.shareErr != nil {
+		return f.shareErr
+	}
+	f.sharedItemID = itemID
+	f.sharedWith = recipient
+	f.sharedRole = role
 	return nil
 }
 
@@ -156,6 +170,112 @@ func TestActionOutputIsReferenceableDownstream(t *testing.T) {
 	}
 	if fFiles.commented[1] != "applied tag: reviewed" {
 		t.Fatalf("expected downstream node to see the tag action's output via {{tag.output}}, got comment %q", fFiles.commented[1])
+	}
+}
+
+func shareWorkflow() model.WorkflowDefinition {
+	return model.WorkflowDefinition{
+		ID: "wf-share",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "share",
+					"actionParams": map[string]any{"recipient": "{{file.name}}-owner@example.com", "role": "editor"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "action-1"},
+			},
+		},
+	}
+}
+
+func TestRunShareAction(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "file body", name: "invoice.pdf"}
+	fGraph := &fakeGraph{}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", shareWorkflow(), "manual", "/Invoices/invoice.pdf")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if len(record.NodeResults) != 1 {
+		t.Fatalf("expected 1 node result (action), got %d", len(record.NodeResults))
+	}
+
+	// The recipient template must have been rendered against vars (here, {{file.name}}).
+	if fGraph.sharedWith != "invoice.pdf-owner@example.com" {
+		t.Fatalf("expected rendered recipient, got %q", fGraph.sharedWith)
+	}
+	if fGraph.sharedRole != "editor" {
+		t.Fatalf("expected role %q, got %q", "editor", fGraph.sharedRole)
+	}
+	if fGraph.sharedItemID != "item-for-/Invoices/invoice.pdf" {
+		t.Fatalf("expected share applied to resolved item id, got %q", fGraph.sharedItemID)
+	}
+	if record.NodeResults[0].Output != "invoice.pdf-owner@example.com" {
+		t.Fatalf("expected node result output to be the rendered recipient, got %v", record.NodeResults[0].Output)
+	}
+}
+
+func TestRunShareActionDefaultsToViewerRole(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "x", name: "x.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "share",
+					"actionParams": map[string]any{"recipient": "accounting@example.com"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{{ID: "e1", Source: "trigger", Target: "action-1"}},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/x.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fGraph.sharedRole != "viewer" {
+		t.Fatalf("expected default role %q, got %q", "viewer", fGraph.sharedRole)
+	}
+}
+
+func TestRunShareActionRequiresRecipient(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "x", name: "x.txt"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "share",
+					"actionParams": map[string]any{},
+				}},
+			},
+			Edges: []model.WorkflowEdge{{ID: "e1", Source: "trigger", Target: "action-1"}},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/x.txt")
+
+	if record.Status != "failed" {
+		t.Fatalf("expected status failed when recipient is missing, got %s", record.Status)
+	}
+	if fGraph.sharedWith != "" {
+		t.Fatal("Share must not have been called without a recipient")
 	}
 }
 
