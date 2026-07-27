@@ -1,5 +1,5 @@
 {
-  "extends": "@ownclouders/tsconfig",
+  "extends": "@ownclouders/tsconfig/tsconfig.json",
   "compilerOptions": {
     "types": ["vitest/globals"]
   },
