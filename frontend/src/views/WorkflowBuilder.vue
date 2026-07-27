@@ -120,6 +120,7 @@ import { useAppConfig } from '../composables/useAppConfig'
 import { useAutomationConnect } from '../composables/useAutomationConnect'
 import { builderPath, listPath } from '../router'
 import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY } from '../nodeTypes'
+import { computeNewNodePosition } from '../utils/nodeLayout'
 import type { TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
 const props = defineProps<{ id: string }>()
@@ -199,9 +200,7 @@ const onPickNodeType = (typeId: string) => {
   if (!def) return
 
   const source = nodes.value.find((n) => n.id === pickerConnectFrom.value)
-  const position = source
-    ? { x: source.position.x + 260, y: source.position.y }
-    : { x: 40, y: 40 + nodes.value.length * 120 }
+  const position = computeNewNodePosition(nodes.value, source)
 
   const node: WorkflowNode = {
     id: def.nodeKind === 'trigger' ? 'trigger' : nextNodeId(def.nodeKind),
