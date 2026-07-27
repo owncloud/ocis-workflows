@@ -13,14 +13,25 @@ test('the "+" add-next button aligns consistently across node types', async ({ p
   await page.getByRole('button', { name: 'Add trigger' }).click()
   await page.getByRole('button', { name: 'Manual Trigger', exact: true }).click()
   await expect(page.locator('.workflows-node-trigger')).toBeVisible()
+  // Adding the node opens its Node Details panel automatically; close it before
+  // continuing, otherwise its overlay covers the canvas and intercepts clicks below.
+  await page.getByRole('button', { name: 'Close' }).click()
 
   await page.locator('.workflows-node-trigger .workflows-node-add-button').click()
   await page.getByRole('button', { name: 'LLM Prompt', exact: true }).click()
   await expect(page.locator('.workflows-node-llm')).toBeVisible()
+  await page.getByRole('button', { name: 'Close' }).click()
 
   await page.locator('.workflows-node-llm .workflows-node-add-button').click()
   await page.getByRole('button', { name: 'Add Tag', exact: true }).click()
   await expect(page.locator('.workflows-node-action')).toBeVisible()
+  await page.getByRole('button', { name: 'Close' }).click()
+
+  // Adding a node schedules a re-fitted viewport via a 50ms-delayed `fitView` call (see
+  // `fitViewSoon` in WorkflowBuilder.vue — it needs Vue Flow to measure the new node's DOM
+  // first). Wait it out before measuring, otherwise these bounding-box reads can race that
+  // delayed pan/zoom and pick up transient coordinates.
+  await page.waitForTimeout(150)
 
   const centerOffsets: number[] = []
 

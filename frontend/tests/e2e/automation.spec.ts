@@ -40,6 +40,9 @@ test('background execution connects automatically and can be disconnected', asyn
   await page.getByRole('button', { name: 'Add trigger' }).click()
   await page.getByRole('button', { name: 'Manual Trigger', exact: true }).click()
   await expect(page.locator('.workflows-node-trigger')).toBeVisible()
+  // Adding the node opens its Node Details panel automatically; close it before
+  // continuing, otherwise its overlay covers the canvas and intercepts clicks below.
+  await page.getByRole('button', { name: 'Close' }).click()
 
   const workflowName = `e2e automation workflow ${Date.now()}`
   await page.getByRole('button', { name: 'Untitled workflow' }).click()
@@ -64,6 +67,10 @@ test('background execution connects automatically and can be disconnected', asyn
   await page.goto('/workflows/workflows')
   await expect(page.getByText('Background execution active')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Connect automation' })).toHaveCount(0)
+  // The workflow list loads asynchronously after mount — wait for it to settle before
+  // opening the automation panel below, otherwise its automatedWorkflowCount prop (derived
+  // from that list) can still read 0 and silently skip the confirm-warning step.
+  await expect(page.getByText('Loading workflows...')).toBeHidden()
 
   // Disconnecting while the workflow is still active shows the warning.
   await page.getByRole('button', { name: 'manage' }).click()
