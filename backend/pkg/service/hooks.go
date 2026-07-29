@@ -78,14 +78,6 @@ func (h *HooksHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate-limit before doing any lookup work at all — the cheapest possible check first,
-	// so a flood of requests for one token can't be used to run up DB/oCIS API load even
-	// when they'd otherwise fail auth anyway.
-	if h.limiter != nil && !h.limiter.Allow(token) {
-		writeError(w, http.StatusTooManyRequests, "rateLimited", "too many requests for this webhook token")
-		return
-	}
-
 	entry, err := h.triggers.GetTriggerIndexEntry(r.Context(), workflowID)
 	// Deliberately identical response whether the workflow id is unknown, isn't a webhook
 	// trigger, has no token generated yet, or the token plain doesn't match — never let a
@@ -95,6 +87,19 @@ func (h *HooksHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "invalid webhook token")
 		return
 	}
+
+	// Rate-limit keyed by workflowID, not the caller-supplied token, and only once we know
+	// workflowID names a real webhook-triggered workflow: workflowID's cardinality is
+	// bounded by how many such workflows actually exist, so an attacker flooding garbage
+	// tokens (or garbage workflow ids) against this route can't grow the limiter's map
+	// without bound the way keying on the raw, attacker-controlled token would. This still
+	// rate-limits repeated wrong-token guesses against a real workflow — the actual brute-
+	// force scenario this exists to stop — just via a key an attacker can't inflate.
+	if h.limiter != nil && !h.limiter.Allow(workflowID) {
+		writeError(w, http.StatusTooManyRequests, "rateLimited", "too many requests for this webhook token")
+		return
+	}
+
 	if subtle.ConstantTimeCompare([]byte(token), []byte(entry.WebhookToken)) != 1 {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "invalid webhook token")
 		return
@@ -115,9 +120,17 @@ func (h *HooksHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodyBytes))
+	// Read one byte past the cap so a body that exactly fills it can be told apart from one
+	// that overflows it — LimitReader alone can't distinguish "exactly maxWebhookBodyBytes"
+	// from "more, silently cut off", which would otherwise feed a truncated (and likely
+	// unparseable) body into the executor with no indication to the caller.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodyBytes+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalidRequest", "could not read request body")
+		return
+	}
+	if len(body) > maxWebhookBodyBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "requestTooLarge", "request body exceeds the maximum allowed size")
 		return
 	}
 
