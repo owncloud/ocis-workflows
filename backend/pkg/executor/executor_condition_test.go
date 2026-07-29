@@ -217,6 +217,102 @@ func TestRunConditionInvalidRegexIsAClearErrorNotAPanic(t *testing.T) {
 	}
 }
 
+// TestRunChainedConditions covers cond-1 -> cond-2 -> action, the shape not exercised by
+// any other test here: two condition nodes back to back, each independently evaluating
+// its own comparison (both against {{file.name}}, since that's all the fakes populate)
+// and picking its own outgoing edge. Only when both evaluate to "true" does the chain
+// reach the action.
+func TestRunChainedConditions(t *testing.T) {
+	chainedWorkflow := func() model.WorkflowDefinition {
+		return model.WorkflowDefinition{
+			ID: "wf-cond-chain",
+			Graph: model.WorkflowGraph{
+				Nodes: []model.WorkflowNode{
+					{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+					{ID: "cond-1", Type: "condition", Data: map[string]any{
+						"left": "{{file.name}}", "operator": "contains", "right": "invoice",
+					}},
+					{ID: "cond-2", Type: "condition", Data: map[string]any{
+						"left": "{{file.name}}", "operator": "contains", "right": "urgent",
+					}},
+					{ID: "action-true", Type: "action", Data: map[string]any{
+						"actionType":   "tag",
+						"actionParams": map[string]any{"tag": "chain-true"},
+					}},
+				},
+				Edges: []model.WorkflowEdge{
+					{ID: "e1", Source: "trigger", Target: "cond-1"},
+					{ID: "e2", Source: "cond-1", Target: "cond-2", SourceHandle: "true"},
+					{ID: "e3", Source: "cond-2", Target: "action-true", SourceHandle: "true"},
+				},
+			},
+		}
+	}
+
+	t.Run("first condition false dead-ends before the second condition ever runs", func(t *testing.T) {
+		fFiles := &fakeFiles{content: "x", name: "receipt.pdf"}
+		fGraph := &fakeGraph{}
+
+		e := New(&fakeLLM{}, fFiles, fGraph, discardLogger())
+		record := e.Run(context.Background(), "token", chainedWorkflow(), "manual", "/receipt.pdf")
+
+		if record.Status != "succeeded" {
+			t.Fatalf("expected status succeeded (dead end, not an error), got %s (error: %v)", record.Status, record.Error)
+		}
+		if len(record.NodeResults) != 1 || record.NodeResults[0].NodeID != "cond-1" {
+			t.Fatalf("expected only cond-1 to have run, got %+v", record.NodeResults)
+		}
+		if fGraph.taggedWith != "" {
+			t.Fatalf("action must not have run, got taggedWith=%q", fGraph.taggedWith)
+		}
+	})
+
+	t.Run("first true, second false dead-ends after cond-2 without running the action", func(t *testing.T) {
+		fFiles := &fakeFiles{content: "x", name: "invoice.pdf"}
+		fGraph := &fakeGraph{}
+
+		e := New(&fakeLLM{}, fFiles, fGraph, discardLogger())
+		record := e.Run(context.Background(), "token", chainedWorkflow(), "manual", "/invoice.pdf")
+
+		if record.Status != "succeeded" {
+			t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+		}
+		if len(record.NodeResults) != 2 {
+			t.Fatalf("expected cond-1 and cond-2 to have run, got %+v", record.NodeResults)
+		}
+		if record.NodeResults[0].NodeID != "cond-1" || record.NodeResults[0].Output != "true" {
+			t.Fatalf("unexpected cond-1 result: %+v", record.NodeResults[0])
+		}
+		if record.NodeResults[1].NodeID != "cond-2" || record.NodeResults[1].Output != "false" {
+			t.Fatalf("unexpected cond-2 result: %+v", record.NodeResults[1])
+		}
+		if fGraph.taggedWith != "" {
+			t.Fatalf("action must not have run since cond-2 evaluated to false, got taggedWith=%q", fGraph.taggedWith)
+		}
+	})
+
+	t.Run("both conditions true runs the action", func(t *testing.T) {
+		fFiles := &fakeFiles{content: "x", name: "urgent-invoice.pdf"}
+		fGraph := &fakeGraph{}
+
+		e := New(&fakeLLM{}, fFiles, fGraph, discardLogger())
+		record := e.Run(context.Background(), "token", chainedWorkflow(), "manual", "/urgent-invoice.pdf")
+
+		if record.Status != "succeeded" {
+			t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+		}
+		if len(record.NodeResults) != 3 {
+			t.Fatalf("expected cond-1, cond-2, and the action to have run, got %+v", record.NodeResults)
+		}
+		if record.NodeResults[2].NodeID != "action-true" {
+			t.Fatalf("expected action-true to run once both conditions matched, got %+v", record.NodeResults[2])
+		}
+		if fGraph.taggedWith != "chain-true" {
+			t.Fatalf("expected action to tag chain-true, got taggedWith=%q", fGraph.taggedWith)
+		}
+	})
+}
+
 // TestRunFansOutFromNonConditionNode is a regression check: a non-condition node with
 // multiple outgoing edges must still run every downstream branch unconditionally, exactly
 // like before condition-node support was added.
