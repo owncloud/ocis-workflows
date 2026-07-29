@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,6 +249,39 @@ func TestHooksTriggerJSONArrayBodySkipsFlatteningButKeepsRawString(t *testing.T)
 	}
 }
 
+// TestHooksTriggerOversizedBodyReturns413NotATruncatedRun proves a body over
+// maxWebhookBodyBytes is rejected outright rather than silently cut off and fed into the
+// executor as a truncated (and likely unparseable) value with no indication to the caller.
+func TestHooksTriggerOversizedBodyReturns413NotATruncatedRun(t *testing.T) {
+	h, _, _, _, exec := newTestHooksHandler(t)
+
+	oversized := strings.Repeat("a", maxWebhookBodyBytes+1)
+	rec := doPost(t, router(h), "/hooks/wf-1/correct-token", oversized)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if exec.runs != 0 {
+		t.Fatal("expected no run for an oversized body")
+	}
+}
+
+// TestHooksTriggerBodyExactlyAtTheCapStillRuns is the boundary check for the fix above: a
+// body of exactly maxWebhookBodyBytes must not be mistaken for "one byte too many".
+func TestHooksTriggerBodyExactlyAtTheCapStillRuns(t *testing.T) {
+	h, _, _, _, exec := newTestHooksHandler(t)
+
+	exact := strings.Repeat("a", maxWebhookBodyBytes)
+	rec := doPost(t, router(h), "/hooks/wf-1/correct-token", exact)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if exec.lastVars["webhook.body"] != exact {
+		t.Fatal("expected the full, exact-size body to reach the executor unmodified")
+	}
+}
+
 func TestHooksTriggerDisabledWorkflowDoesNotRun(t *testing.T) {
 	triggers := &fakeHooksTriggerStore{entries: map[string]localdb.TriggerIndexEntry{
 		"wf-1": {WorkflowID: "wf-1", UserID: "user-1", TriggerType: "webhook", WebhookToken: "correct-token"},
@@ -324,5 +358,59 @@ func TestHooksTriggerRateLimitsAfterNRequests(t *testing.T) {
 	rec = doPost(t, r, "/hooks/wf-2/other-token", "{}")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("a different token's own budget must be unaffected, status = %d", rec.Code)
+	}
+}
+
+// TestHooksTriggerRateLimitsRepeatedWrongTokenGuessesAgainstARealWorkflow proves the rate
+// limiter still does its actual job — capping brute-force token guesses against one real
+// workflow — now that it's keyed by workflowID rather than the raw, caller-supplied token.
+func TestHooksTriggerRateLimitsRepeatedWrongTokenGuessesAgainstARealWorkflow(t *testing.T) {
+	triggers := &fakeHooksTriggerStore{entries: map[string]localdb.TriggerIndexEntry{
+		"wf-1": {WorkflowID: "wf-1", UserID: "user-1", TriggerType: "webhook", WebhookToken: "correct-token"},
+	}}
+	automations := &fakeHooksAutomationStore{automations: map[string]*localdb.Automation{}}
+	store := &fakeHooksWorkflowStore{}
+	exec := &fakeHooksExecutor{}
+	const limit = 3
+	h := NewHooksHandler(triggers, automations, store, exec, ratelimit.New(limit, time.Minute), discardLogger())
+	r := router(h)
+
+	// Every guess is a distinct, wrong token against the same real workflow id.
+	for i := 0; i < limit; i++ {
+		rec := doPost(t, r, fmt.Sprintf("/hooks/wf-1/guess-%d", i), "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("guess %d: status = %d, want 401", i, rec.Code)
+		}
+	}
+
+	rec := doPost(t, r, "/hooks/wf-1/yet-another-guess", "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 once wf-1's budget is exhausted regardless of the guessed token", rec.Code)
+	}
+}
+
+// TestHooksTriggerFloodOfUnknownWorkflowIDsDoesNotBypassRateLimiting guards the actual bug:
+// keying the limiter on the caller-supplied token (or on an unbounded id) let an attacker
+// grow the limiter's tracked-key set without limit by varying the guess. Keying on
+// workflowID only after a real entry is found means a flood of *distinct unknown* ids never
+// even reaches the limiter — each one 401s on the lookup before Allow is ever called — so it
+// can't be used to inflate tracked state, unlike repeated guesses against one real workflow
+// (covered above), which are exactly what the limiter is meant to cap.
+func TestHooksTriggerFloodOfUnknownWorkflowIDsDoesNotBypassRateLimiting(t *testing.T) {
+	triggers := &fakeHooksTriggerStore{entries: map[string]localdb.TriggerIndexEntry{}}
+	automations := &fakeHooksAutomationStore{automations: map[string]*localdb.Automation{}}
+	store := &fakeHooksWorkflowStore{}
+	exec := &fakeHooksExecutor{}
+	h := NewHooksHandler(triggers, automations, store, exec, ratelimit.New(1000, time.Minute), discardLogger())
+	r := router(h)
+
+	for i := 0; i < 50; i++ {
+		rec := doPost(t, r, fmt.Sprintf("/hooks/unknown-wf-%d/some-token", i), "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("request %d: status = %d, want 401 for an unknown workflow id", i, rec.Code)
+		}
+	}
+	if exec.runs != 0 {
+		t.Fatal("no unknown workflow id should ever reach the executor")
 	}
 }
