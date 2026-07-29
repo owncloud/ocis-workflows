@@ -144,3 +144,53 @@ describe('NodeDetailsPanel file-source warning', () => {
     expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
   })
 })
+
+const mountPanelWithStubs = (node: WorkflowNode) =>
+  mount(NodeDetailsPanel, {
+    props: { node, nodes: [], edges: [] },
+    global: {
+      plugins: [gettext],
+      stubs: { 'oc-icon': true, 'oc-button': true, 'oc-text-input': true }
+    }
+  })
+
+describe('NodeDetailsPanel action fields', () => {
+  it('renders the tag action with its one text field', () => {
+    const wrapper = mountPanelWithStubs({
+      id: 'a',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'tag' }
+    })
+
+    expect(wrapper.find('h2').text()).toBe('Add Tag')
+    // tag action has exactly one oc-text-input for its own value, plus the condition field.
+    expect(wrapper.findAllComponents({ name: 'oc-text-input' })).toHaveLength(2)
+  })
+
+  it('renders the no-config delete action with no action-specific fields', () => {
+    const wrapper = mountPanelWithStubs({
+      id: 'a',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'delete' }
+    })
+
+    expect(wrapper.find('h2').text()).toBe('Delete File')
+    // No textarea and no oc-text-input beyond the generic "condition" field.
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.findAllComponents({ name: 'oc-text-input' })).toHaveLength(1)
+  })
+
+  it('renders the move action with its destination field (unlike delete, which has none)', () => {
+    const wrapper = mountPanelWithStubs({
+      id: 'a',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'move' }
+    })
+
+    expect(wrapper.find('h2').text()).toBe('Move File')
+    expect(wrapper.findAllComponents({ name: 'oc-text-input' })).toHaveLength(2)
+  })
+})
