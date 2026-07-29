@@ -222,6 +222,47 @@ func TestRunCreateFolderActionDoesNotChangeCurrentPath(t *testing.T) {
 	}
 }
 
+// TestRunCreateFolderOutputIsReferenceableByALaterAction locks in that createFolder writes
+// its rendered path into vars (not just result.Output), so a later move/copy action can
+// reuse it as its own destination via {{createFolder.output}} — the same convention every
+// other action type already follows (see vars["llm.output"], vars["tag.output"], etc.).
+func TestRunCreateFolderOutputIsReferenceableByALaterAction(t *testing.T) {
+	fLLM := &fakeLLM{}
+	fFiles := &fakeFiles{content: "x", name: "invoice.pdf"}
+	fGraph := &fakeGraph{}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-create-folder-then-move",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "action-1", Type: "action", Data: map[string]any{
+					"actionType":   "createFolder",
+					"actionParams": map[string]any{"path": "/Archive/Invoices"},
+				}},
+				{ID: "action-2", Type: "action", Data: map[string]any{
+					"actionType":   "move",
+					"actionParams": map[string]any{"destination": "{{createFolder.output}}"},
+				}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "action-1"},
+				{ID: "e2", Source: "action-1", Target: "action-2"},
+			},
+		},
+	}
+
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/Docs/invoice.pdf")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if fFiles.moved != [2]string{"/Docs/invoice.pdf", "/Archive/Invoices/invoice.pdf"} {
+		t.Fatalf("expected move destination templated from {{createFolder.output}}, got moved=%+v", fFiles.moved)
+	}
+}
+
 var errFakeLLM = &testError{"llm unavailable"}
 
 type testError struct{ msg string }
