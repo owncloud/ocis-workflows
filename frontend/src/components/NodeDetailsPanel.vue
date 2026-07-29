@@ -128,6 +128,16 @@
           </template>
         </template>
 
+        <div v-if="outputHint" class="workflows-ndv-output">
+          <p class="workflows-ndv-label">{{ $gettext('Output') }}</p>
+          <p class="workflows-ndv-output-description">{{ outputHint.description }}</p>
+          <p class="workflows-ndv-output-tokens">
+            <code v-for="token in outputHint.tokens" :key="token" class="workflows-ndv-output-token">{{
+              token
+            }}</code>
+          </p>
+        </div>
+
         <oc-text-input
           v-model="condition"
           class="workflows-ndv-field"
@@ -164,6 +174,65 @@ const showFileSourceWarning = computed(
     isFileDependentActionType(props.node.data.actionType) &&
     !hasUpstreamFileSource(props.node.id, props.nodes, props.edges)
 )
+
+// Every syntax shown here must be a variable key the backend executor (backend/pkg/executor/
+// executor.go) actually writes into its shared "vars" map before rendering a downstream node's
+// {{...}} templates — never a token that only looks plausible. Today that's:
+//   - "file.name" / "file.content", set once per run from the triggering resource
+//   - "llm.output", set by runLLM() after every LLM node
+//   - "<actionType>.output" (tag/comment/move/copy/rename/notify), set by runAction() per node
+interface OutputHint {
+  tokens: string[]
+  description: string
+}
+
+const actionOutputHints: Record<string, OutputHint> = {
+  tag: {
+    tokens: ['{{tag.output}}'],
+    description: $gettext('The tag value that was applied to the file.')
+  },
+  comment: {
+    tokens: ['{{comment.output}}'],
+    description: $gettext('The comment text that was added to the file.')
+  },
+  move: {
+    tokens: ['{{move.output}}'],
+    description: $gettext('The path the file was moved to.')
+  },
+  copy: {
+    tokens: ['{{copy.output}}'],
+    description: $gettext('The path of the copy that was created.')
+  },
+  rename: {
+    tokens: ['{{rename.output}}'],
+    description: $gettext('The file path after the rename.')
+  },
+  notify: {
+    tokens: ['{{notify.output}}'],
+    description: $gettext('A fixed "sent" status once the notification has gone out.')
+  }
+}
+
+const outputHint = computed<OutputHint | null>(() => {
+  if (props.node.type === 'trigger') {
+    return {
+      tokens: ['{{file.name}}', '{{file.content}}'],
+      description: $gettext(
+        'Available in every downstream node whenever this workflow runs against a specific file — e.g. a file-event trigger, or a manual run targeting a file.'
+      )
+    }
+  }
+  if (props.node.type === 'llm') {
+    return {
+      tokens: ['{{llm.output}}'],
+      description: $gettext("The LLM's response text.")
+    }
+  }
+  if (props.node.type === 'action' && props.node.data.actionType) {
+    return actionOutputHints[props.node.data.actionType] ?? null
+  }
+  return null
+})
 
 const patch = (partial: Partial<WorkflowNodeData>) => emit('update', { ...props.node.data, ...partial })
 
@@ -273,5 +342,27 @@ const paramMessage = actionParam('message')
   margin-top: 1.5rem;
   padding-top: 1rem;
   border-top: 1px solid var(--oc-color-border, rgba(0, 0, 0, 0.1));
+}
+.workflows-ndv-output {
+  border: 1px solid var(--oc-color-border, #d9d9d9);
+  border-radius: 4px;
+  padding: 0.75rem;
+  background: var(--oc-color-background-muted, rgba(0, 0, 0, 0.03));
+}
+.workflows-ndv-output-description {
+  opacity: 0.7;
+  margin: 0.25rem 0 0.5rem;
+}
+.workflows-ndv-output-tokens {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.workflows-ndv-output-token {
+  font-family: monospace;
+  background: var(--oc-color-background-highlight, rgba(0, 0, 0, 0.08));
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
 }
 </style>
