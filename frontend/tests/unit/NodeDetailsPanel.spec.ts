@@ -40,3 +40,51 @@ describe('NodeDetailsPanel', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 })
+
+// oc-* components come from the host web app's design system and aren't registered in
+// this unit-test environment; stub them with minimal look-alikes so v-model bindings
+// and the props we assert on (label/placeholder) behave predictably.
+const globalStubs = {
+  'oc-icon': true,
+  'oc-button': true,
+  'oc-text-input': {
+    props: ['modelValue', 'label', 'placeholder', 'descriptionMessage'],
+    emits: ['update:modelValue'],
+    template:
+      '<input :aria-label="label" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  }
+}
+
+const extractTextNode: WorkflowNode = {
+  id: 'extract-1',
+  type: 'extractText',
+  position: { x: 0, y: 0 },
+  data: {}
+}
+
+describe('NodeDetailsPanel — Extract Text node', () => {
+  it('renders an optional output-variable-override field defaulting to file.text', () => {
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: extractTextNode },
+      global: { stubs: globalStubs, plugins: [gettext] }
+    })
+
+    const input = wrapper.find('input[placeholder="file.text"]')
+    expect(input.exists()).toBe(true)
+  })
+
+  it('emits an update with the custom outputVariable when the field changes', async () => {
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: extractTextNode },
+      global: { stubs: globalStubs, plugins: [gettext] }
+    })
+
+    const input = wrapper.find('input[placeholder="file.text"]')
+    await input.setValue('myCustomVar')
+
+    const emitted = wrapper.emitted('update')
+    expect(emitted).toBeTruthy()
+    const lastPayload = emitted![emitted!.length - 1][0] as { outputVariable?: string }
+    expect(lastPayload.outputVariable).toBe('myCustomVar')
+  })
+})

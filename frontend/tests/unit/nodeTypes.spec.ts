@@ -5,7 +5,8 @@ import {
   NODE_TYPES,
   NOTIFICATION_CATEGORY,
   TRIGGER_CATEGORY,
-  findNodeType
+  findNodeType,
+  findNodeTypeForNode
 } from '../../src/nodeTypes'
 
 describe('node type categorization', () => {
@@ -30,5 +31,23 @@ describe('node type categorization', () => {
     )
 
     expect(nonTriggerCategories).toEqual(new Set([AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY]))
+  })
+})
+
+describe('nodeTypes', () => {
+  it('registers an Extract Text node in the AI category', () => {
+    const entry = NODE_TYPES.find((t) => t.nodeKind === 'extractText')
+
+    expect(entry).toBeDefined()
+    expect(entry?.category).toBe(AI_CATEGORY)
+    expect(entry?.icon).toBeTruthy()
+    expect(entry?.label).toBeTruthy()
+  })
+
+  it('resolves the Extract Text node type definition for a canvas node of that kind', () => {
+    const found = findNodeTypeForNode('extractText')
+
+    expect(found).toBeDefined()
+    expect(found?.nodeKind).toBe('extractText')
   })
 })

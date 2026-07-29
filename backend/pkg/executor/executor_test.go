@@ -1,8 +1,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/owncloud/ocis-workflows/pkg/llm"
@@ -146,6 +149,157 @@ func TestRender(t *testing.T) {
 	if got != "a.txt -> ok" {
 		t.Fatalf("render() = %q", got)
 	}
+}
+
+// testWorkflowExtractText wires trigger -> extractText -> llm, with the llm prompt
+// referencing whichever output variable extractText is expected to populate (the
+// default file.text, or outputVar if non-empty), so a rendered-prompt assertion proves
+// the variable really landed in vars, not just that the node "succeeded".
+func testWorkflowExtractText(outputVar string) (model.WorkflowDefinition, string) {
+	varName := "file.text"
+	extractData := map[string]any{}
+	if outputVar != "" {
+		varName = outputVar
+		extractData["outputVariable"] = outputVar
+	}
+
+	wf := model.WorkflowDefinition{
+		ID: "wf-extract",
+		Graph: model.WorkflowGraph{
+			Nodes: []model.WorkflowNode{
+				{ID: "trigger", Type: "trigger", Data: map[string]any{}},
+				{ID: "extract-1", Type: "extractText", Data: extractData},
+				{ID: "llm-1", Type: "llm", Data: map[string]any{"prompt": "Summarize {{" + varName + "}}"}},
+			},
+			Edges: []model.WorkflowEdge{
+				{ID: "e1", Source: "trigger", Target: "extract-1"},
+				{ID: "e2", Source: "extract-1", Target: "llm-1"},
+			},
+		},
+	}
+	return wf, varName
+}
+
+func TestRunExtractTextPlainTextPassthroughDefaultOutputVar(t *testing.T) {
+	fLLM := &fakeLLM{response: "ok"}
+	fFiles := &fakeFiles{content: "already plain text", name: "notes.txt"}
+	fGraph := &fakeGraph{}
+
+	wf, _ := testWorkflowExtractText("")
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/notes.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if len(fLLM.lastReq) != 1 || fLLM.lastReq[0].Content != "Summarize already plain text" {
+		t.Fatalf("expected file.text to hold the passed-through plain text, got llm request %+v", fLLM.lastReq)
+	}
+
+	extractResult := record.NodeResults[0]
+	if extractResult.NodeID != "extract-1" {
+		t.Fatalf("expected extract-1 to be the first node result, got %+v", extractResult)
+	}
+	wantOutput := fmt.Sprintf("%d characters extracted", len("already plain text"))
+	if extractResult.Output != wantOutput {
+		t.Fatalf("extract-1 result.Output = %q, want %q", extractResult.Output, wantOutput)
+	}
+}
+
+func TestRunExtractTextCustomOutputVariable(t *testing.T) {
+	fLLM := &fakeLLM{response: "ok"}
+	fFiles := &fakeFiles{content: "custom var content", name: "notes.txt"}
+	fGraph := &fakeGraph{}
+
+	wf, _ := testWorkflowExtractText("myVar")
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/notes.txt")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if len(fLLM.lastReq) != 1 || fLLM.lastReq[0].Content != "Summarize custom var content" {
+		t.Fatalf("expected the custom output variable to hold the extracted text, got llm request %+v", fLLM.lastReq)
+	}
+}
+
+func TestRunExtractTextPDFEndToEnd(t *testing.T) {
+	fLLM := &fakeLLM{response: "ok"}
+	fFiles := &fakeFiles{content: string(buildTestPDFFixture("Hello From PDF")), name: "invoice.pdf"}
+	fGraph := &fakeGraph{}
+
+	wf, _ := testWorkflowExtractText("")
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/invoice.pdf")
+
+	if record.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %s (error: %v)", record.Status, record.Error)
+	}
+	if len(fLLM.lastReq) != 1 {
+		t.Fatalf("expected one rendered llm request, got %+v", fLLM.lastReq)
+	}
+	rendered := strings.Join(strings.Fields(fLLM.lastReq[0].Content), " ")
+	if !strings.Contains(rendered, "Hello From PDF") {
+		t.Fatalf("expected the PDF's real text in the rendered prompt, got %q", fLLM.lastReq[0].Content)
+	}
+}
+
+func TestRunExtractTextNodeFailsOnCorruptDocument(t *testing.T) {
+	fLLM := &fakeLLM{response: "should not be called"}
+	fFiles := &fakeFiles{content: "not a real pdf", name: "broken.pdf"}
+	fGraph := &fakeGraph{}
+
+	wf, _ := testWorkflowExtractText("")
+	e := New(fLLM, fFiles, fGraph, discardLogger())
+	record := e.Run(context.Background(), "token", wf, "manual", "/broken.pdf")
+
+	if record.Status != "failed" {
+		t.Fatalf("expected status failed for a corrupt pdf, got %s", record.Status)
+	}
+	if len(record.NodeResults) != 1 || record.NodeResults[0].NodeID != "extract-1" {
+		t.Fatalf("expected execution to stop at the failing extractText node, got %+v", record.NodeResults)
+	}
+	if len(fLLM.lastReq) != 0 {
+		t.Fatal("llm node must not have run after the extractText node failed")
+	}
+}
+
+// buildTestPDFFixture constructs a minimal, valid single-page PDF containing text,
+// with a correct xref table computed from real byte offsets. This mirrors
+// pkg/textextract's own test fixture builder; it's kept small and local here rather
+// than exported from textextract, since exporting a fixture-only helper from the
+// production package just to save a few duplicated lines in one other test file isn't
+// worth the added public surface.
+func buildTestPDFFixture(text string) []byte {
+	var buf bytes.Buffer
+	offsets := make([]int, 6)
+	buf.WriteString("%PDF-1.4\n")
+
+	write := func(i int, s string) {
+		offsets[i] = buf.Len()
+		buf.WriteString(s)
+	}
+
+	write(1, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+	write(2, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+	write(3, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "+
+		"/MediaBox [0 0 200 200] /Contents 5 0 R >>\nendobj\n")
+	write(4, "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+
+	content := fmt.Sprintf("BT /F1 24 Tf 10 100 Td (%s) Tj ET", text)
+	write(5, fmt.Sprintf("5 0 obj\n<< /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(content), content))
+
+	xrefStart := buf.Len()
+	buf.WriteString("xref\n0 6\n")
+	buf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
+	}
+	buf.WriteString("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n")
+	fmt.Fprintf(&buf, "%d\n", xrefStart)
+	buf.WriteString("%%EOF")
+
+	return buf.Bytes()
 }
 
 func TestBaseNameDirName(t *testing.T) {

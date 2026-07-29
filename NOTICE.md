@@ -8,3 +8,7 @@ third-party components not licensed under Apache-2.0:
 - **[github.com/unraid/apprise-go](https://github.com/unraid/apprise-go)** — BSD-2-Clause,
   Copyright (c) 2025, Chris Caron. Used by `backend/pkg/notify` to implement the workflow
   "notify" action. License text: `LICENSES/BSD-2-Clause.txt`.
+- **[github.com/ledongthuc/pdf](https://github.com/ledongthuc/pdf)** — BSD-3-Clause,
+  Copyright (c) 2009 The Go Authors. Used by `backend/pkg/textextract` to extract plain
+  text from PDF files for the "Extract Text" node. License text:
+  `LICENSES/BSD-3-Clause.txt`.
