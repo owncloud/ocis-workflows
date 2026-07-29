@@ -23,13 +23,18 @@
               <button
                 type="button"
                 class="workflows-picker-item"
+                :class="{ 'workflows-picker-item-disabled': item.disabled }"
                 :aria-label="item.label"
-                @click="$emit('select', item.id)"
+                :aria-disabled="item.disabled"
+                :disabled="item.disabled"
+                :title="item.disabledReason"
+                @click="!item.disabled && $emit('select', item.id)"
               >
                 <oc-icon :name="item.icon" fill-type="line" />
                 <span class="workflows-picker-item-text">
                   <span class="workflows-picker-item-label">{{ item.label }}</span>
                   <span class="workflows-picker-item-description">{{ item.description }}</span>
+                  <span v-if="item.disabledReason" class="workflows-picker-item-reason">{{ item.disabledReason }}</span>
                 </span>
               </button>
             </li>
@@ -47,23 +52,43 @@
 import { computed, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { NODE_TYPES, type NodeTypeDefinition } from '../nodeTypes'
+import { canUpstreamProvideFile, isFileDependentActionType } from '../utils/flowValidation'
+import type { WorkflowEdge, WorkflowNode } from '../types/workflow'
 
-const props = defineProps<{ allowedCategories?: string[] }>()
+type PickerItem = NodeTypeDefinition & { disabled: boolean; disabledReason?: string }
+
+const props = defineProps<{
+  allowedCategories?: string[]
+  /** The node this picker was opened from (the new node's future upstream neighbor), if any. */
+  sourceNodeId?: string | null
+  nodes?: WorkflowNode[]
+  edges?: WorkflowEdge[]
+}>()
 defineEmits<{ (e: 'select', id: string): void; (e: 'close'): void }>()
 
 const { $gettext } = useGettext()
 const query = ref('')
 
+// Only false when the source node's upstream trigger is structurally incapable of ever
+// providing a file (a Schedule Trigger). A Manual Trigger is deliberately NOT treated as
+// disabling here — see canUpstreamProvideFile for why (frontend/src/utils/flowValidation.ts).
+const sourceCanProvideFile = computed(() =>
+  props.sourceNodeId ? canUpstreamProvideFile(props.sourceNodeId, props.nodes ?? [], props.edges ?? []) : true
+)
+
+const disabledReason = $gettext('Requires a file — add a File Event Trigger upstream.')
+
 const groups = computed(() => {
   const q = query.value.trim().toLowerCase()
-  const byCategory = new Map<string, NodeTypeDefinition[]>()
+  const byCategory = new Map<string, PickerItem[]>()
 
   for (const item of NODE_TYPES) {
     if (props.allowedCategories && !props.allowedCategories.includes(item.category)) continue
     if (q && !item.label.toLowerCase().includes(q) && !item.description.toLowerCase().includes(q)) continue
 
+    const disabled = isFileDependentActionType(item.actionType) && !sourceCanProvideFile.value
     const existing = byCategory.get(item.category) ?? []
-    existing.push(item)
+    existing.push({ ...item, disabled, disabledReason: disabled ? disabledReason : undefined })
     byCategory.set(item.category, existing)
   }
 
@@ -127,6 +152,14 @@ const groups = computed(() => {
 .workflows-picker-item:focus-visible {
   background: var(--oc-color-background-hover, rgba(0, 0, 0, 0.05));
 }
+.workflows-picker-item-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.workflows-picker-item-disabled:hover,
+.workflows-picker-item-disabled:focus-visible {
+  background: transparent;
+}
 .workflows-picker-item-text {
   display: flex;
   flex-direction: column;
@@ -137,6 +170,11 @@ const groups = computed(() => {
 .workflows-picker-item-description {
   font-size: 0.8rem;
   opacity: 0.7;
+}
+.workflows-picker-item-reason {
+  font-size: 0.75rem;
+  font-style: italic;
+  opacity: 0.8;
 }
 .workflows-picker-empty {
   opacity: 0.6;

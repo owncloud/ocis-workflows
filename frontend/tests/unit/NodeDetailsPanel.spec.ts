@@ -2,13 +2,13 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { createGettext } from 'vue3-gettext'
 import NodeDetailsPanel from '../../src/components/NodeDetailsPanel.vue'
-import type { WorkflowNode } from '../../src/types/workflow'
+import type { WorkflowEdge, WorkflowNode } from '../../src/types/workflow'
 
 const gettext = createGettext({ availableLanguages: { en: 'English' }, defaultLanguage: 'en' })
 
-const mountPanel = (node: WorkflowNode) =>
+const mountPanel = (node: WorkflowNode, nodes: WorkflowNode[] = [], edges: WorkflowEdge[] = []) =>
   mount(NodeDetailsPanel, {
-    props: { node },
+    props: { node, nodes, edges },
     global: {
       plugins: [gettext]
     }
@@ -65,7 +65,7 @@ const extractTextNode: WorkflowNode = {
 describe('NodeDetailsPanel — Extract Text node', () => {
   it('renders an optional output-variable-override field defaulting to file.text', () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode },
+      props: { node: extractTextNode, nodes: [], edges: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
@@ -75,7 +75,7 @@ describe('NodeDetailsPanel — Extract Text node', () => {
 
   it('emits an update with the custom outputVariable when the field changes', async () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode },
+      props: { node: extractTextNode, nodes: [], edges: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
@@ -86,5 +86,61 @@ describe('NodeDetailsPanel — Extract Text node', () => {
     expect(emitted).toBeTruthy()
     const lastPayload = emitted![emitted!.length - 1][0] as { outputVariable?: string }
     expect(lastPayload.outputVariable).toBe('myCustomVar')
+  })
+})
+
+describe('NodeDetailsPanel file-source warning', () => {
+  const moveAction: WorkflowNode = {
+    id: 'action-1',
+    type: 'action',
+    position: { x: 0, y: 0 },
+    data: { actionType: 'move' }
+  }
+
+  it('warns when configuring a move action fed only by a manual trigger', () => {
+    const nodes: WorkflowNode[] = [
+      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'manual' } },
+      moveAction
+    ]
+    const edges: WorkflowEdge[] = [{ id: 'e1', source: 'trigger', target: 'action-1' }]
+
+    const wrapper = mountPanel(moveAction, nodes, edges)
+
+    expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(true)
+  })
+
+  it('does not warn when configuring a move action fed by a File Event Trigger', () => {
+    const nodes: WorkflowNode[] = [
+      {
+        id: 'trigger',
+        type: 'trigger',
+        position: { x: 0, y: 0 },
+        data: { triggerType: 'event', event: { type: 'upload' } }
+      },
+      moveAction
+    ]
+    const edges: WorkflowEdge[] = [{ id: 'e1', source: 'trigger', target: 'action-1' }]
+
+    const wrapper = mountPanel(moveAction, nodes, edges)
+
+    expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
+  })
+
+  it('does not warn for a non-file-dependent action such as notify', () => {
+    const notifyAction: WorkflowNode = {
+      id: 'action-1',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'notify' }
+    }
+    const nodes: WorkflowNode[] = [
+      { id: 'trigger', type: 'trigger', position: { x: 0, y: 0 }, data: { triggerType: 'manual' } },
+      notifyAction
+    ]
+    const edges: WorkflowEdge[] = [{ id: 'e1', source: 'trigger', target: 'action-1' }]
+
+    const wrapper = mountPanel(notifyAction, nodes, edges)
+
+    expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
   })
 })

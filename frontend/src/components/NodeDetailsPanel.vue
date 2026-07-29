@@ -10,6 +10,13 @@
         </oc-button>
       </div>
       <p v-if="nodeType" class="workflows-ndv-description">{{ nodeType.description }}</p>
+      <p v-if="showFileSourceWarning" class="workflows-ndv-warning">
+        {{
+          $gettext(
+            'This action needs a file to act on, but nothing upstream reliably provides one. Add a File Event Trigger upstream, or make sure a file path is supplied when this workflow runs.'
+          )
+        }}
+      </p>
 
       <div class="workflows-ndv-body">
         <template v-if="node.type === 'trigger'">
@@ -142,13 +149,21 @@
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { findNodeTypeForNode } from '../nodeTypes'
-import type { EventTriggerType, WorkflowNode, WorkflowNodeData } from '../types/workflow'
+import { hasUpstreamFileSource, isFileDependentActionType } from '../utils/flowValidation'
+import type { EventTriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
-const props = defineProps<{ node: WorkflowNode }>()
+const props = defineProps<{ node: WorkflowNode; nodes: WorkflowNode[]; edges: WorkflowEdge[] }>()
 const emit = defineEmits<{ (e: 'update', data: WorkflowNodeData): void; (e: 'close'): void }>()
 const { $gettext } = useGettext()
 
 const nodeType = computed(() => findNodeTypeForNode(props.node.type, props.node.data.actionType))
+
+const showFileSourceWarning = computed(
+  () =>
+    props.node.type === 'action' &&
+    isFileDependentActionType(props.node.data.actionType) &&
+    !hasUpstreamFileSource(props.node.id, props.nodes, props.edges)
+)
 
 const patch = (partial: Partial<WorkflowNodeData>) => emit('update', { ...props.node.data, ...partial })
 
@@ -225,6 +240,14 @@ const paramMessage = actionParam('message')
 .workflows-ndv-description {
   opacity: 0.7;
   margin-top: 0.25rem;
+}
+.workflows-ndv-warning {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  background: var(--oc-color-swatch-warning-default, #fff4e5);
+  color: var(--oc-color-swatch-warning-contrastText, #7a4a00);
+  font-size: 0.9rem;
 }
 .workflows-ndv-body {
   margin-top: 1.5rem;
