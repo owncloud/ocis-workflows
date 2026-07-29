@@ -250,6 +250,7 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = folderPath
+		vars["createFolder.output"] = folderPath
 		return currentPath, nil
 
 	case "move", "copy":
