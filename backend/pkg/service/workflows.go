@@ -25,12 +25,13 @@ type Executor interface {
 	Run(ctx context.Context, token string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord
 }
 
-// TriggerIndexer keeps the sidecar's local schedule/event trigger index (see localdb) in
-// sync with workflow definitions, so the cron scheduler and SSE consumer manager don't need
-// to scan every user's WebDAV space on every tick.
+// TriggerIndexer keeps the sidecar's local schedule/event/webhook trigger index (see
+// localdb) in sync with workflow definitions, so the cron scheduler, SSE consumer manager,
+// and webhook route don't need to scan every user's WebDAV space on every tick/request.
 type TriggerIndexer interface {
 	UpsertTriggerIndexEntry(ctx context.Context, e localdb.TriggerIndexEntry) error
 	DeleteTriggerIndexEntry(ctx context.Context, workflowID string) error
+	GetTriggerIndexEntry(ctx context.Context, workflowID string) (*localdb.TriggerIndexEntry, error)
 }
 
 // ReconcileKicker lets a trigger-index write ask the SSE manager to reconcile its active
@@ -60,10 +61,19 @@ func NewWorkflowsHandler(store *webdavstore.Store, executor Executor, users User
 
 // syncTriggerIndex keeps the local trigger index in sync with a workflow's current
 // enabled/trigger state — called after every successful create/update/delete. Best-effort:
-// a failure here only means schedule/event triggers won't fire, it never breaks the CRUD
-// operation the caller is waiting on, so errors are logged, not returned.
+// a failure here only means schedule/event/webhook triggers won't fire, it never breaks the
+// CRUD operation the caller is waiting on, so errors are logged, not returned.
 func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader string, wf model.WorkflowDefinition) {
-	if !wf.Enabled || (wf.Trigger.Type != "schedule" && wf.Trigger.Type != "event") {
+	indexable := wf.Trigger.Type == "schedule" || wf.Trigger.Type == "event" || wf.Trigger.Type == "webhook"
+	// Schedule/event triggers are removed from the index the moment the workflow is
+	// disabled — no point ticking/streaming for something that won't run. A webhook
+	// trigger's entry is different: it's also the token/URL's identity, and losing it on
+	// every "toggle inactive" would silently invalidate a URL the user may have already
+	// handed to an external caller. Keep it; HooksHandler.Trigger itself checks
+	// wf.Enabled before actually running anything, exactly like the scheduler/SSE manager
+	// already do for their triggers.
+	keepWhileDisabled := wf.Trigger.Type == "webhook"
+	if !indexable || (!wf.Enabled && !keepWhileDisabled) {
 		if err := h.triggerIndex.DeleteTriggerIndexEntry(ctx, wf.ID); err != nil {
 			h.log.Error("remove trigger index entry", "workflowID", wf.ID, "error", err)
 		}
@@ -77,16 +87,39 @@ func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader stri
 	}
 
 	entry := localdb.TriggerIndexEntry{WorkflowID: wf.ID, UserID: userID, TriggerType: wf.Trigger.Type}
-	if wf.Trigger.Type == "schedule" {
+	switch wf.Trigger.Type {
+	case "schedule":
 		entry.Schedule = wf.Trigger.Schedule
-	}
-	if wf.Trigger.Type == "event" && wf.Trigger.Event != nil {
-		entry.EventType = wf.Trigger.Event.Type
-		if wf.Trigger.Event.Filters != nil {
-			entry.PathPrefix = wf.Trigger.Event.Filters.PathPrefix
-			entry.Extension = wf.Trigger.Event.Filters.Extension
+
+	case "event":
+		if wf.Trigger.Event != nil {
+			entry.EventType = wf.Trigger.Event.Type
+			if wf.Trigger.Event.Filters != nil {
+				entry.PathPrefix = wf.Trigger.Event.Filters.PathPrefix
+				entry.Extension = wf.Trigger.Event.Filters.Extension
+			}
 		}
+
+	case "webhook":
+		// Generate a token only the first time this workflow becomes a webhook trigger;
+		// every later save (rename, description edit, enable/disable toggle, ...) must
+		// preserve whatever token is already there. Explicit rotation is a separate,
+		// deliberate action (RotateWebhookToken), not a side effect of an unrelated edit.
+		token := ""
+		if existing, err := h.triggerIndex.GetTriggerIndexEntry(ctx, wf.ID); err == nil {
+			token = existing.WebhookToken
+		}
+		if token == "" {
+			generated, err := localdb.NewWebhookToken()
+			if err != nil {
+				h.log.Error("sync trigger index: generate webhook token", "workflowID", wf.ID, "error", err)
+				return
+			}
+			token = generated
+		}
+		entry.WebhookToken = token
 	}
+
 	if err := h.triggerIndex.UpsertTriggerIndexEntry(ctx, entry); err != nil {
 		h.log.Error("update trigger index entry", "workflowID", wf.ID, "error", err)
 		return

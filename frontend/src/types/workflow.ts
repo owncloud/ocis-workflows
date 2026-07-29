@@ -1,8 +1,8 @@
-export type TriggerType = 'manual' | 'schedule' | 'event'
+export type TriggerType = 'manual' | 'schedule' | 'event' | 'webhook'
 export type EventTriggerType = 'upload' | 'move' | 'share' | 'lock'
 export type ActionType = 'tag' | 'comment' | 'move' | 'copy' | 'rename' | 'notify'
 export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
-export type ExecutionTrigger = 'manual' | 'schedule' | 'event'
+export type ExecutionTrigger = 'manual' | 'schedule' | 'event' | 'webhook'
 
 export interface WorkflowTrigger {
   type: TriggerType
@@ -101,6 +101,14 @@ export interface ExecutionRecord {
 export interface AutomationStatus {
   connected: boolean
   expirationDateTime?: string
+}
+
+/** The webhook trigger's token/URL — only ever returned by the deliberate reveal/rotate
+ *  actions (see useWorkflowsApi's getWebhookToken/rotateWebhookToken), never by the normal
+ *  workflow GET/List/Patch responses. */
+export interface WebhookTokenInfo {
+  token: string
+  url: string
 }
 
 export interface GraphCollection<T> {

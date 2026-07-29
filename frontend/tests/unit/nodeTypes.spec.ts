@@ -51,3 +51,23 @@ describe('nodeTypes', () => {
     expect(found?.nodeKind).toBe('extractText')
   })
 })
+
+describe('nodeTypes - webhook trigger', () => {
+  it('registers a webhook trigger entry under the Triggers category', () => {
+    const webhook = NODE_TYPES.find((t) => t.id === 'trigger-webhook')
+
+    expect(webhook).toBeDefined()
+    expect(webhook?.nodeKind).toBe('trigger')
+    expect(webhook?.category).toBe(TRIGGER_CATEGORY)
+    expect(webhook?.defaultData.triggerType).toBe('webhook')
+  })
+
+  it('resolves the webhook trigger by id via findNodeType', () => {
+    expect(findNodeType('trigger-webhook')?.label).toMatch(/webhook/i)
+  })
+
+  it('resolves an existing webhook trigger node back to its node type definition', () => {
+    const match = findNodeTypeForNode('trigger', 'webhook')
+    expect(match?.id).toBe('trigger-webhook')
+  })
+})
