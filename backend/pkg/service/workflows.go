@@ -85,6 +85,7 @@ func (h *WorkflowsHandler) syncTriggerIndex(ctx context.Context, authHeader stri
 		if wf.Trigger.Event.Filters != nil {
 			entry.PathPrefix = wf.Trigger.Event.Filters.PathPrefix
 			entry.Extension = wf.Trigger.Event.Filters.Extension
+			entry.SpaceID = wf.Trigger.Event.Filters.SpaceID
 		}
 	}
 	if err := h.triggerIndex.UpsertTriggerIndexEntry(ctx, entry); err != nil {

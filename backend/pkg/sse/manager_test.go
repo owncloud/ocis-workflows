@@ -161,6 +161,43 @@ func TestHandleEventSkipsNonMatchingPathPrefix(t *testing.T) {
 	}
 }
 
+func TestHandleEventSkipsNonMatchingSpace(t *testing.T) {
+	triggers := &fakeTriggerStore{
+		entries: []localdb.TriggerIndexEntry{
+			{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "space-a"},
+		},
+	}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{
+		"wf-1": {ID: "wf-1", Enabled: true},
+	}}
+	exec := &fakeExecutor{}
+
+	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, "http://unused", false, time.Hour, discardLogger())
+	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"space-b"}`)
+
+	time.Sleep(50 * time.Millisecond)
+	if got := exec.runs.Load(); got != 0 {
+		t.Fatalf("expected 0 runs for a non-matching space, got %d", got)
+	}
+}
+
+func TestHandleEventMatchesSpecificSpace(t *testing.T) {
+	triggers := &fakeTriggerStore{
+		entries: []localdb.TriggerIndexEntry{
+			{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "space-a"},
+		},
+	}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{
+		"wf-1": {ID: "wf-1", Enabled: true},
+	}}
+	exec := &fakeExecutor{}
+
+	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, "http://unused", false, time.Hour, discardLogger())
+	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"space-a"}`)
+
+	waitFor(t, 2*time.Second, func() bool { return exec.runs.Load() == 1 })
+}
+
 func TestHandleEventIgnoresUnmappedSSEEventType(t *testing.T) {
 	triggers := &fakeTriggerStore{
 		entries: []localdb.TriggerIndexEntry{

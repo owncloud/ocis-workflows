@@ -100,7 +100,7 @@ func TestTriggerIndex(t *testing.T) {
 	}
 	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
 		WorkflowID: "wf-2", UserID: "user-1", TriggerType: "event", EventType: "upload",
-		PathPrefix: "/Invoices", Extension: ".pdf",
+		PathPrefix: "/Invoices", Extension: ".pdf", SpaceID: "space-1",
 	}); err != nil {
 		t.Fatalf("UpsertTriggerIndexEntry: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestTriggerIndex(t *testing.T) {
 	if len(events) != 1 || events[0].WorkflowID != "wf-2" {
 		t.Fatalf("ListEventTriggers() = %+v", events)
 	}
-	if events[0].PathPrefix != "/Invoices" || events[0].Extension != ".pdf" {
+	if events[0].PathPrefix != "/Invoices" || events[0].Extension != ".pdf" || events[0].SpaceID != "space-1" {
 		t.Fatalf("ListEventTriggers() filters = %+v", events[0])
 	}
 

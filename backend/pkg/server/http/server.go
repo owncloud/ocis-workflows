@@ -21,6 +21,7 @@ type Options struct {
 	Validator     *auth.Validator
 	Workflows     *service.WorkflowsHandler
 	Automation    *service.AutomationHandler
+	Spaces        *service.SpacesHandler
 	Logger        *slog.Logger
 }
 
@@ -64,6 +65,10 @@ func New(opts Options) http.Handler {
 			r.Get("/", opts.Automation.Get)
 			r.Post("/", opts.Automation.Connect)
 			r.Delete("/", opts.Automation.Disconnect)
+		})
+
+		r.Route("/me/spaces", func(r chi.Router) {
+			r.Get("/", opts.Spaces.List)
 		})
 	})
 
