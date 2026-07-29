@@ -30,11 +30,12 @@ type FileClient interface {
 	Comment(ctx context.Context, authHeader, davPath, text string) error
 }
 
-// GraphClient performs Graph-API-only operations (tags have no WebDAV equivalent).
+// GraphClient performs Graph-API-only operations (tags and sharing have no WebDAV equivalent).
 // Satisfied by *ocisclient.Client.
 type GraphClient interface {
 	ResolveItemID(ctx context.Context, authHeader, davPath string) (string, error)
 	AssignTag(ctx context.Context, authHeader, itemID, tag string) error
+	Share(ctx context.Context, authHeader, itemID, recipient, role string) error
 }
 
 // Executor runs a WorkflowDefinition's graph against a target resource.
@@ -225,6 +226,25 @@ func (e *Executor) runAction(ctx context.Context, authHeader string, node model.
 			return currentPath, err
 		}
 		result.Output = tag
+		return currentPath, nil
+
+	case "share":
+		recipient := param("recipient")
+		role := param("role")
+		if role == "" {
+			role = "viewer"
+		}
+		if recipient == "" || currentPath == "" {
+			return currentPath, fmt.Errorf("share action needs both a target file and a recipient")
+		}
+		itemID, err := e.graph.ResolveItemID(ctx, authHeader, currentPath)
+		if err != nil {
+			return currentPath, err
+		}
+		if err := e.graph.Share(ctx, authHeader, itemID, recipient, role); err != nil {
+			return currentPath, err
+		}
+		result.Output = recipient
 		return currentPath, nil
 
 	case "comment":

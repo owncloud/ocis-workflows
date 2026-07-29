@@ -144,3 +144,68 @@ describe('NodeDetailsPanel file-source warning', () => {
     expect(wrapper.find('.workflows-ndv-warning').exists()).toBe(false)
   })
 })
+
+const mountPanelWithStubs = (node: WorkflowNode) =>
+  mount(NodeDetailsPanel, {
+    props: { node, nodes: [], edges: [] },
+    global: {
+      plugins: [gettext],
+      stubs: {
+        'oc-icon': true,
+        'oc-button': true,
+        'oc-text-input': {
+          template:
+            '<input :id="$attrs.id" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+          props: ['modelValue', 'label', 'placeholder', 'descriptionMessage']
+        }
+      }
+    }
+  })
+
+describe('NodeDetailsPanel - share action', () => {
+  const shareNode: WorkflowNode = {
+    id: 'action-1',
+    type: 'action',
+    position: { x: 0, y: 0 },
+    data: { actionType: 'share', actionParams: { recipient: 'accounting@example.com', role: 'editor' } }
+  }
+
+  it('renders a text input wired to actionParams.recipient', async () => {
+    const wrapper = mountPanelWithStubs(shareNode)
+
+    const input = wrapper.find('input')
+    expect(input.exists()).toBe(true)
+    expect(input.element.value).toBe('accounting@example.com')
+
+    await input.setValue('new-recipient@example.com')
+    const updateEvents = wrapper.emitted('update')
+    expect(updateEvents).toBeTruthy()
+    const lastUpdate = updateEvents![updateEvents!.length - 1][0] as { actionParams?: Record<string, unknown> }
+    expect(lastUpdate.actionParams?.recipient).toBe('new-recipient@example.com')
+  })
+
+  it('renders a role select wired to actionParams.role, defaulting to viewer', async () => {
+    const wrapper = mountPanelWithStubs(shareNode)
+
+    const select = wrapper.find('#ndv-role')
+    expect(select.exists()).toBe(true)
+    expect((select.element as HTMLSelectElement).value).toBe('editor')
+
+    await select.setValue('viewer')
+    const updateEvents = wrapper.emitted('update')
+    const lastUpdate = updateEvents![updateEvents!.length - 1][0] as { actionParams?: Record<string, unknown> }
+    expect(lastUpdate.actionParams?.role).toBe('viewer')
+  })
+
+  it('defaults the role field to viewer when unset', () => {
+    const node: WorkflowNode = {
+      id: 'action-2',
+      type: 'action',
+      position: { x: 0, y: 0 },
+      data: { actionType: 'share', actionParams: {} }
+    }
+    const wrapper = mountPanelWithStubs(node)
+    const select = wrapper.find('#ndv-role')
+    expect((select.element as HTMLSelectElement).value).toBe('viewer')
+  })
+})
