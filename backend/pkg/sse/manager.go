@@ -77,7 +77,20 @@ type Manager struct {
 	httpClient *http.Client
 
 	mu     sync.Mutex
-	active map[string]context.CancelFunc // userID -> cancel
+	active map[string]activeConsumer // userID -> consumer
+	nextID uint64                    // monotonically increasing id, tags each activeConsumer
+
+	kick chan struct{}
+}
+
+// activeConsumer tracks one userID's running consumeForUser goroutine. id disambiguates
+// consumeForUser's self-removal (see deactivate) from a newer goroutine that reconcile may
+// have already started for the same userID by the time the old one gets around to cleaning
+// up after itself — without it, that self-removal could delete a live entry that isn't even
+// the one it owns.
+type activeConsumer struct {
+	cancel context.CancelFunc
+	id     uint64
 }
 
 // New builds a Manager.
@@ -96,11 +109,27 @@ func New(db TriggerStore, store WorkflowStore, paths PathResolver, executor Exec
 		interval:   interval,
 		log:        log,
 		httpClient: &http.Client{Transport: transport}, // no overall Timeout: this is a long-lived stream
-		active:     map[string]context.CancelFunc{},
+		active:     map[string]activeConsumer{},
+		kick:       make(chan struct{}, 1),
 	}
 }
 
-// Start blocks, reconciling active consumers every interval, until ctx is done.
+// Kick requests an immediate reconcile pass instead of waiting for the next periodic tick.
+// Callers that just made a change that could affect the wanted-consumer set — a workflow's
+// event trigger being added/enabled, or a user's automation getting connected — should call
+// this so the corresponding SSE consumer starts promptly instead of within the next interval
+// (up to sseReconcileInterval later). Non-blocking and safe to call from any goroutine; if a
+// kick is already pending, this is a no-op since one reconcile pass picks up all pending
+// changes anyway.
+func (m *Manager) Kick() {
+	select {
+	case m.kick <- struct{}{}:
+	default:
+	}
+}
+
+// Start blocks, reconciling active consumers every interval — or immediately whenever Kick
+// is called — until ctx is done.
 func (m *Manager) Start(ctx context.Context) {
 	m.reconcile(ctx)
 
@@ -112,6 +141,8 @@ func (m *Manager) Start(ctx context.Context) {
 			m.stopAll()
 			return
 		case <-ticker.C:
+			m.reconcile(ctx)
+		case <-m.kick:
 			m.reconcile(ctx)
 		}
 	}
@@ -132,9 +163,9 @@ func (m *Manager) reconcile(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for userID, cancel := range m.active {
+	for userID, c := range m.active {
 		if !wanted[userID] {
-			cancel()
+			c.cancel()
 			delete(m.active, userID)
 		}
 	}
@@ -143,26 +174,49 @@ func (m *Manager) reconcile(ctx context.Context) {
 			continue
 		}
 		cctx, cancel := context.WithCancel(ctx)
-		m.active[userID] = cancel
-		go m.consumeForUser(cctx, userID)
+		m.nextID++
+		id := m.nextID
+		m.active[userID] = activeConsumer{cancel: cancel, id: id}
+		go m.consumeForUser(cctx, userID, id)
 	}
 }
 
 func (m *Manager) stopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for userID, cancel := range m.active {
-		cancel()
+	for userID, c := range m.active {
+		c.cancel()
+		delete(m.active, userID)
+	}
+}
+
+// deactivate removes userID's active-consumer entry, but only if it still belongs to the
+// caller (identified by id) — i.e. reconcile hasn't already replaced it with a newer
+// consumer for the same userID in the meantime. See consumeForUser and activeConsumer.
+func (m *Manager) deactivate(userID string, id uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.active[userID]; ok && c.id == id {
 		delete(m.active, userID)
 	}
 }
 
 // consumeForUser holds one SSE connection open for userID, reconnecting with backoff if it
-// drops, until ctx is cancelled (the user's last event trigger was removed, or shutdown).
-func (m *Manager) consumeForUser(ctx context.Context, userID string) {
+// drops, until ctx is cancelled (the user's last event trigger was removed, or shutdown). id
+// is the activeConsumer id reconcile assigned when it started this goroutine.
+//
+// Note on m.active bookkeeping: below this point, every return happens because ctx was
+// cancelled — by reconcile (userID dropped out of wanted) or by stopAll (shutdown) — and
+// both of those already remove the m.active entry themselves under the lock before
+// cancelling, so consumeForUser must not also delete it there; doing so could race with a
+// fresh entry a later reconcile pass has already installed for the same userID. The
+// GetAutomation failure below is the one return path ctx did NOT cause, so it's the one case
+// where this goroutine is responsible for cleaning up after itself.
+func (m *Manager) consumeForUser(ctx context.Context, userID string, id uint64) {
 	automation, err := m.db.GetAutomation(ctx, userID)
 	if err != nil {
 		m.log.Warn("sse manager: user has an event trigger but no automation connected", "userID", userID)
+		m.deactivate(userID, id)
 		return
 	}
 	authHeader := "Basic " + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", automation.Username, automation.AppPassword))
