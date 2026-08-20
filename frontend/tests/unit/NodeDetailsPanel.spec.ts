@@ -8,7 +8,7 @@ const gettext = createGettext({ availableLanguages: { en: 'English' }, defaultLa
 
 const mountPanel = (node: WorkflowNode, nodes: WorkflowNode[] = [], edges: WorkflowEdge[] = []) =>
   mount(NodeDetailsPanel, {
-    props: { node, nodes, edges },
+    props: { node, nodes, edges, spaces: [] },
     global: {
       plugins: [gettext]
     }
@@ -65,7 +65,7 @@ const extractTextNode: WorkflowNode = {
 describe('NodeDetailsPanel — Extract Text node', () => {
   it('renders an optional output-variable-override field defaulting to file.text', () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode, nodes: [], edges: [] },
+      props: { node: extractTextNode, nodes: [], edges: [], spaces: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
@@ -75,7 +75,7 @@ describe('NodeDetailsPanel — Extract Text node', () => {
 
   it('emits an update with the custom outputVariable when the field changes', async () => {
     const wrapper = mount(NodeDetailsPanel, {
-      props: { node: extractTextNode, nodes: [], edges: [] },
+      props: { node: extractTextNode, nodes: [], edges: [], spaces: [] },
       global: { stubs: globalStubs, plugins: [gettext] }
     })
 
@@ -156,7 +156,7 @@ const outputHintStubs = {
 
 function mountOutputHintPanel(node: WorkflowNode) {
   return mount(NodeDetailsPanel, {
-    props: { node, nodes: [], edges: [] },
+    props: { node, nodes: [], edges: [], spaces: [] },
     global: {
       plugins: [createGettext({ translations: {} })],
       stubs: outputHintStubs
