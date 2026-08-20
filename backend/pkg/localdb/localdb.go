@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers as "sqlite"
@@ -39,6 +40,35 @@ type TriggerIndexEntry struct {
 	PathPrefix  string // event trigger filter, mirrors model.EventFilters
 	Extension   string // event trigger filter, mirrors model.EventFilters
 	SpaceID     string // event trigger filter, mirrors model.EventFilters
+}
+
+// MatchesFilters reports whether e's path-prefix, extension, and space filters (any of
+// which may be unset, meaning "no restriction") admit an event at the given resolved
+// WebDAV path and originating space id. Does not check UserID or EventType — callers
+// filter on those first, since it's cheaper than resolving a path.
+func (e TriggerIndexEntry) MatchesFilters(path, spaceID string) bool {
+	if e.PathPrefix != "" && !strings.HasPrefix(path, e.PathPrefix) {
+		return false
+	}
+	if e.Extension != "" && !strings.HasSuffix(path, e.Extension) {
+		return false
+	}
+	if e.SpaceID != "" && e.SpaceID != spaceID {
+		return false
+	}
+	return true
+}
+
+// EventCursor tracks the last time this backend successfully reconciled a user's drive
+// against oCIS's activitylog, closing any gap the SSE connection may have missed while it
+// was down. LastStatus records whether that reconciliation attempt actually succeeded
+// ("full") or the activitylog query itself failed ("sse-only") — surfaced to the user via
+// GET /me/automation's reliability field.
+type EventCursor struct {
+	UserID      string
+	DriveID     string
+	LastChecked time.Time
+	LastStatus  string // "full" | "sse-only"
 }
 
 // DB is the sidecar's local SQLite-backed store.
@@ -88,6 +118,13 @@ func (db *DB) migrate() error {
 			trigger_type TEXT NOT NULL,
 			schedule TEXT NOT NULL DEFAULT '',
 			event_type TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE IF NOT EXISTS event_cursors (
+			user_id TEXT NOT NULL,
+			drive_id TEXT NOT NULL,
+			last_checked TEXT NOT NULL,
+			last_status TEXT NOT NULL DEFAULT 'full',
+			PRIMARY KEY (user_id, drive_id)
 		);
 	`); err != nil {
 		return err
@@ -264,4 +301,64 @@ func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIn
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// GetEventCursor returns the stored cursor for (userID, driveID), or ErrNotFound if this
+// pair has never been reconciled.
+func (db *DB) GetEventCursor(ctx context.Context, userID, driveID string) (*EventCursor, error) {
+	row := db.sql.QueryRowContext(ctx, `
+		SELECT user_id, drive_id, last_checked, last_status
+		FROM event_cursors WHERE user_id = ? AND drive_id = ?
+	`, userID, driveID)
+
+	var c EventCursor
+	var lastChecked string
+	if err := row.Scan(&c.UserID, &c.DriveID, &lastChecked, &c.LastStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	c.LastChecked, _ = time.Parse(time.RFC3339, lastChecked)
+	return &c, nil
+}
+
+// UpsertEventCursor stores or replaces the cursor for (c.UserID, c.DriveID).
+func (db *DB) UpsertEventCursor(ctx context.Context, c EventCursor) error {
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO event_cursors (user_id, drive_id, last_checked, last_status)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id, drive_id) DO UPDATE SET
+			last_checked = excluded.last_checked,
+			last_status = excluded.last_status
+	`, c.UserID, c.DriveID, c.LastChecked.UTC().Format(time.RFC3339), c.LastStatus)
+	return err
+}
+
+// DeleteEventCursors removes every stored event cursor for userID (mirrors DeleteAutomation).
+// Called when a user disconnects automation, so a drive that was marked "sse-only" doesn't
+// keep reporting degraded reliability forever with no way to clear it, and so cursor rows
+// for a user who's disconnected don't just accumulate indefinitely.
+func (db *DB) DeleteEventCursors(ctx context.Context, userID string) error {
+	_, err := db.sql.ExecContext(ctx, `DELETE FROM event_cursors WHERE user_id = ?`, userID)
+	return err
+}
+
+// GetReliability reports "sse-only" if userID has any event-cursor row currently marked
+// degraded, "full" otherwise (including when userID has no cursor rows at all — nothing
+// has been found unreliable yet).
+func (db *DB) GetReliability(ctx context.Context, userID string) (string, error) {
+	row := db.sql.QueryRowContext(ctx, `
+		SELECT 1 FROM event_cursors WHERE user_id = ? AND last_status = 'sse-only' LIMIT 1
+	`, userID)
+
+	var found int
+	err := row.Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "full", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return "sse-only", nil
 }
