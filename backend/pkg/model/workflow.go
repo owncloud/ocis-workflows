@@ -108,6 +108,12 @@ type ErrorDetail struct {
 type AutomationStatus struct {
 	Connected          bool   `json:"connected"`
 	ExpirationDateTime string `json:"expirationDateTime,omitempty"`
+	// Reliability is "full" when event triggers are backed by both live SSE delivery and
+	// the activitylog reconciliation backstop, or "sse-only" when the last reconciliation
+	// attempt failed (e.g. activitylog unavailable/disabled) — meaning events are only as
+	// reliable as the live SSE connection, with no catch-up if it drops. Empty when
+	// Connected is false.
+	Reliability string `json:"reliability,omitempty"`
 }
 
 // Space is a simplified view of an oCIS space (drive), exposed so a trigger's event filter
