@@ -157,28 +157,64 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 // testResourceID, matching what splitResourceID now returns as itemID.
 const testResourceID = "storage1$drive-1!opaque-1"
 
-func TestReconcileFirstEverCallSeedsCursorWithoutBackfill(t *testing.T) {
+// TestReconcileFirstEverPassDispatchesActivityWithinLookback proves a (user, drive) pair
+// with no prior cursor at all doesn't just seed a cursor and skip the query — it's exactly
+// the scenario this backstop exists for (a brand-new event trigger whose upload raced the
+// very first SSE connection), so the very first pass must actually look back and catch it.
+func TestReconcileFirstEverPassDispatchesActivityWithinLookback(t *testing.T) {
 	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
 		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "drive-1"},
 	})
+	// No cursor seeded for (user-1, drive-1) — this is a genuine first-ever pass.
 	activities := newFakeActivityLister(map[string][]ocisclient.Activity{
-		"drive-1": {{ID: "act-1", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}}},
+		"drive-1": {{ID: "act-1", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}, RecordedTime: time.Now().Add(-10 * time.Second)}},
 	})
 	exec := &fakeExecutor{}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
-	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 5*time.Minute, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
-	if activities.callCount.Load() != 0 {
-		t.Fatalf("expected no activitylog query on first-ever call (nothing to backfill), got %d calls", activities.callCount.Load())
-	}
-	if exec.runs.Load() != 0 {
-		t.Fatalf("expected no workflow run on first-ever call, got %d", exec.runs.Load())
+	waitFor(t, time.Second, func() bool { return exec.runs.Load() == 1 })
+
+	if activities.callCount.Load() != 1 {
+		t.Fatalf("expected exactly 1 activitylog query on the first-ever pass (not skipped), got %d", activities.callCount.Load())
 	}
 	if _, ok := triggers.cursor("user-1", "drive-1"); !ok {
 		t.Fatal("expected a cursor to be seeded for (user-1, drive-1)")
+	}
+}
+
+// TestReconcileFirstEverPassExcludesActivityBeforeLookback proves the first-ever lookback is
+// actually bounded — a first-ever pass on an old/busy drive must not flood-dispatch its
+// entire history, only the genuine just-created-trigger window.
+func TestReconcileFirstEverPassExcludesActivityBeforeLookback(t *testing.T) {
+	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
+		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "drive-1"},
+	})
+	// No cursor seeded — genuine first-ever pass.
+	activities := newFakeActivityLister(map[string][]ocisclient.Activity{
+		"drive-1": {{ID: "act-1", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}, RecordedTime: time.Now().Add(-time.Hour)}},
+	})
+	activities.filterBySince = true // model oCIS's real server-side "timestamp>since" filtering
+	exec := &fakeExecutor{}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
+
+	// A short lookback (a few seconds, not the 5-minute production default) keeps this test
+	// fast — the activity was recorded an hour ago, well outside any realistic lookback, so
+	// the exact magnitude doesn't matter as long as it's meaningfully bounded rather than
+	// unbounded.
+	firstConnectLookback := 2 * time.Second
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, time.Second, time.Second, firstConnectLookback, 10, discardLogger())
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
+
+	if activities.callCount.Load() != 1 {
+		t.Fatalf("expected the first-ever pass to query activitylog (bounded, not skipped), got %d calls", activities.callCount.Load())
+	}
+	if exec.runs.Load() != 0 {
+		t.Fatalf("expected 0 runs for an activity recorded well before the lookback window, got %d", exec.runs.Load())
 	}
 }
 
@@ -199,7 +235,7 @@ func TestReconcileDispatchesMatchingActivity(t *testing.T) {
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
-	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	waitFor(t, time.Second, func() bool { return exec.runs.Load() == 1 })
@@ -263,7 +299,7 @@ func TestReconcileDoesNotRepeatDispatchOnSubsequentPass(t *testing.T) {
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
-	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, gracePeriod, overlap, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, gracePeriod, overlap, time.Hour, 10, discardLogger())
 
 	// Give the activity a head start past the overlap window before the reconciler ever
 	// sees it, so pass 1's cursor (advanced to "now") already sits more than `overlap` past
@@ -305,7 +341,7 @@ func TestReconcileSkipsUnmappedMessage(t *testing.T) {
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
-	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	time.Sleep(50 * time.Millisecond)
@@ -328,7 +364,7 @@ func TestReconcileSkipsInternalBookkeepingPath(t *testing.T) {
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/.workflows/executions/wf-1/exec-1.json"}}
 
-	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	time.Sleep(50 * time.Millisecond)
@@ -345,7 +381,7 @@ func TestReconcileDebouncesWithinGracePeriod(t *testing.T) {
 		t.Fatalf("seed cursor: %v", err)
 	}
 	activities := newFakeActivityLister(map[string][]ocisclient.Activity{})
-	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, time.Hour, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, time.Hour, 5*time.Second, time.Hour, 10, discardLogger())
 
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
@@ -365,7 +401,7 @@ func TestReconcileOnActivityErrorMarksCursorDegraded(t *testing.T) {
 	activities := newFakeActivityLister(nil)
 	activities.err = context.DeadlineExceeded
 
-	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	cursor, ok := triggers.cursor("user-1", "drive-1")
@@ -396,7 +432,7 @@ func TestReconcileUnscopedTriggerEnumeratesAllDrives(t *testing.T) {
 	}}
 	activities := newFakeActivityLister(map[string][]ocisclient.Activity{})
 
-	r := New(triggers, drives, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, drives, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	if activities.callCount.Load() != 2 {
@@ -417,7 +453,7 @@ func TestReconcileScopedTriggerOnlyQueriesItsOwnDrive(t *testing.T) {
 	}}
 	activities := newFakeActivityLister(map[string][]ocisclient.Activity{})
 
-	r := New(triggers, drives, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, 10, discardLogger())
+	r := New(triggers, drives, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
 
 	if activities.callCount.Load() != 1 {
@@ -459,7 +495,7 @@ func TestReconcileConcurrencyIsBounded(t *testing.T) {
 		}
 	}
 
-	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, maxConcurrent, discardLogger())
+	r := New(triggers, &fakeDriveLister{}, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, time.Hour, maxConcurrent, discardLogger())
 
 	var wg sync.WaitGroup
 	for _, u := range users {
