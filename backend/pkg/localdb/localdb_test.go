@@ -164,6 +164,10 @@ func TestTriggerIndexEntryMatchesFilters(t *testing.T) {
 // EXISTS is a no-op against a trigger_index table that already exists from before
 // path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
 // every trigger_index query with "no such column: path_prefix".
+// TestMigrateAddsColumnsToExistingTable regression-tests a real bug: CREATE TABLE IF NOT
+// EXISTS is a no-op against a trigger_index table that already exists from before
+// path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
+// every trigger_index query with "no such column: path_prefix".
 func TestMigrateAddsColumnsToExistingTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 
@@ -205,5 +209,126 @@ func TestMigrateAddsColumnsToExistingTable(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].PathPrefix != "/Invoices" {
 		t.Fatalf("ListEventTriggers() after migration = %+v", events)
+	}
+}
+
+func TestEventCursorRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+
+	checked := time.Now().Truncate(time.Second)
+	err := db.UpsertEventCursor(ctx, EventCursor{
+		UserID: "user-1", DriveID: "drive-1", LastChecked: checked, LastStatus: "full",
+	})
+	if err != nil {
+		t.Fatalf("UpsertEventCursor: %v", err)
+	}
+
+	got, err := db.GetEventCursor(ctx, "user-1", "drive-1")
+	if err != nil {
+		t.Fatalf("GetEventCursor: %v", err)
+	}
+	if !got.LastChecked.Equal(checked) {
+		t.Errorf("LastChecked = %v, want %v", got.LastChecked, checked)
+	}
+	if got.LastStatus != "full" {
+		t.Errorf("LastStatus = %q, want %q", got.LastStatus, "full")
+	}
+}
+
+func TestGetEventCursorNotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := db.GetEventCursor(t.Context(), "user-1", "drive-1"); err != ErrNotFound {
+		t.Fatalf("GetEventCursor: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpsertEventCursorOverwritesExisting(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+
+	first := time.Now().Add(-time.Hour).Truncate(time.Second)
+	second := time.Now().Truncate(time.Second)
+
+	if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-1", DriveID: "drive-1", LastChecked: first, LastStatus: "full"}); err != nil {
+		t.Fatalf("first UpsertEventCursor: %v", err)
+	}
+	if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-1", DriveID: "drive-1", LastChecked: second, LastStatus: "sse-only"}); err != nil {
+		t.Fatalf("second UpsertEventCursor: %v", err)
+	}
+
+	got, err := db.GetEventCursor(ctx, "user-1", "drive-1")
+	if err != nil {
+		t.Fatalf("GetEventCursor: %v", err)
+	}
+	if !got.LastChecked.Equal(second) {
+		t.Errorf("LastChecked = %v, want the second write %v", got.LastChecked, second)
+	}
+	if got.LastStatus != "sse-only" {
+		t.Errorf("LastStatus = %q, want %q", got.LastStatus, "sse-only")
+	}
+}
+
+func TestGetReliabilityFullWhenNoCursorsExist(t *testing.T) {
+	db := testDB(t)
+	got, err := db.GetReliability(t.Context(), "user-1")
+	if err != nil {
+		t.Fatalf("GetReliability: %v", err)
+	}
+	if got != "full" {
+		t.Errorf("GetReliability = %q, want %q", got, "full")
+	}
+}
+
+func TestGetReliabilityFullWhenAllCursorsFull(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+	now := time.Now().Truncate(time.Second)
+	for _, drive := range []string{"drive-1", "drive-2"} {
+		if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-1", DriveID: drive, LastChecked: now, LastStatus: "full"}); err != nil {
+			t.Fatalf("UpsertEventCursor(%s): %v", drive, err)
+		}
+	}
+	got, err := db.GetReliability(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("GetReliability: %v", err)
+	}
+	if got != "full" {
+		t.Errorf("GetReliability = %q, want %q", got, "full")
+	}
+}
+
+func TestGetReliabilityDegradedWhenAnyCursorIsSSEOnly(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+	now := time.Now().Truncate(time.Second)
+	if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-1", DriveID: "drive-1", LastChecked: now, LastStatus: "full"}); err != nil {
+		t.Fatalf("UpsertEventCursor(drive-1): %v", err)
+	}
+	if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-1", DriveID: "drive-2", LastChecked: now, LastStatus: "sse-only"}); err != nil {
+		t.Fatalf("UpsertEventCursor(drive-2): %v", err)
+	}
+	got, err := db.GetReliability(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("GetReliability: %v", err)
+	}
+	if got != "sse-only" {
+		t.Errorf("GetReliability = %q, want %q", got, "sse-only")
+	}
+}
+
+func TestGetReliabilityScopedPerUser(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+	now := time.Now().Truncate(time.Second)
+	if err := db.UpsertEventCursor(ctx, EventCursor{UserID: "user-2", DriveID: "drive-1", LastChecked: now, LastStatus: "sse-only"}); err != nil {
+		t.Fatalf("UpsertEventCursor: %v", err)
+	}
+	got, err := db.GetReliability(ctx, "user-1") // different user, no rows of their own
+	if err != nil {
+		t.Fatalf("GetReliability: %v", err)
+	}
+	if got != "full" {
+		t.Errorf("GetReliability(user-1) = %q, want %q — should not see user-2's degraded row", got, "full")
 	}
 }
