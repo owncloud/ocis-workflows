@@ -73,6 +73,13 @@ type fakeActivityLister struct {
 	err       error
 	callCount atomic.Int32
 	lastSince map[string]time.Time
+	// filterBySince, when true, filters byDrive[driveID] down to activities recorded after
+	// since before returning — modeling the *real* server-side filtering
+	// ocisclient.ListActivities gets from oCIS's activitylog ("timestamp>since" KQL; see
+	// activities.go). Off by default (returns the whole canned list unconditionally, like
+	// the original tests in this file assume) so existing tests are unaffected; tests that
+	// actually need to exercise cursor-driven filtering across multiple passes opt in.
+	filterBySince bool
 }
 
 func newFakeActivityLister(byDrive map[string][]ocisclient.Activity) *fakeActivityLister {
@@ -87,7 +94,17 @@ func (f *fakeActivityLister) ListActivities(_ context.Context, _, driveID string
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.byDrive[driveID], nil
+	all := f.byDrive[driveID]
+	if !f.filterBySince {
+		return all, nil
+	}
+	filtered := make([]ocisclient.Activity, 0, len(all))
+	for _, a := range all {
+		if a.RecordedTime.After(since) {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered, nil
 }
 
 type fakePathResolver struct {
@@ -196,6 +213,81 @@ func TestReconcileDispatchesMatchingActivity(t *testing.T) {
 	}
 	if cursor.LastStatus != "full" {
 		t.Errorf("cursor.LastStatus = %q, want %q", cursor.LastStatus, "full")
+	}
+}
+
+// TestReconcileDoesNotRepeatDispatchOnSubsequentPass proves the cursor advances to
+// wall-clock "now" rather than getting stuck at the last-seen activity's own RecordedTime.
+// The bug this guards against: if the cursor instead tracked
+// max(activity.RecordedTime) seen, a drive that goes quiet after one upload would never
+// advance its cursor past that upload's timestamp, so every future pass would recompute
+// since = thatTimestamp - overlap (a fixed value, independent of how much real time has
+// passed) and the same activity would fall inside it *forever* — a permanent, unbounded
+// repeat dispatch on every subsequent reconnect, not just an occasional one.
+//
+// This is deliberately not modeled by manually rewriting the stored cursor backwards
+// in time: since is a pure function of the stored cursor value and overlap, so pushing the
+// cursor further into the past only widens the query window and would reproduce a
+// re-dispatch under *either* the buggy or the fixed cursor semantics — it can't
+// discriminate between them. What actually distinguishes the two is letting real elapsed
+// time separate (a) the activity's own timestamp from the pass that first discovers it, and
+// (b) that first pass from a later one — mirroring how the design doc (section 4) frames
+// this: an occasional single re-fire right at the query boundary is an accepted trade-off,
+// but it must not recur on every pass forever. So this test uses small, real gracePeriod/
+// overlap values and real (short) sleeps for that separation, and turns on the fake
+// ActivityLister's since-filtering (off by default in other tests) to model what oCIS's
+// real activitylog actually does with the since parameter (see ListActivities's
+// "timestamp>since" KQL, ocisclient/activities.go) — without that, the fake would keep
+// returning the activity forever regardless of the fix, and this test couldn't tell the two
+// implementations apart either.
+func TestReconcileDoesNotRepeatDispatchOnSubsequentPass(t *testing.T) {
+	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
+		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "drive-1"},
+	})
+	// Seed a stale cursor so the first call isn't treated as a first-ever call.
+	if err := triggers.UpsertEventCursor(t.Context(), localdb.EventCursor{UserID: "user-1", DriveID: "drive-1", LastChecked: time.Now().Add(-time.Hour), LastStatus: "full"}); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+
+	gracePeriod := 50 * time.Millisecond
+	overlap := 50 * time.Millisecond
+	margin := 100 * time.Millisecond // comfortably larger than typical goroutine scheduling jitter
+
+	activityTime := time.Now()
+	activities := newFakeActivityLister(map[string][]ocisclient.Activity{
+		"drive-1": {{ID: "act-1", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}, RecordedTime: activityTime}},
+	})
+	activities.filterBySince = true
+
+	exec := &fakeExecutor{}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
+
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, gracePeriod, overlap, 10, discardLogger())
+
+	// Give the activity a head start past the overlap window before the reconciler ever
+	// sees it, so pass 1's cursor (advanced to "now") already sits more than `overlap` past
+	// the activity's own timestamp — realistic (uploads aren't discovered instantaneously)
+	// and necessary for the math below to actually separate the two cases.
+	time.Sleep(overlap + margin)
+
+	// Pass 1: discovers and dispatches the activity; advances the cursor to (approximately)
+	// its own wall-clock "now", not to the activity's RecordedTime.
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
+	waitFor(t, time.Second, func() bool { return exec.runs.Load() == 1 })
+
+	// Wait past the grace period so the next pass isn't debounced — simulating another SSE
+	// reconnect on an otherwise-quiet drive.
+	time.Sleep(gracePeriod + margin)
+
+	// Pass 2: nothing new has happened on the drive. Under the fix, since (derived from
+	// pass 1's now-based cursor) has moved past the activity's own timestamp by more than
+	// overlap, so the (since-filtering) activitylog no longer returns it — it must not be
+	// redispatched.
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
+
+	if got := exec.runs.Load(); got != 1 {
+		t.Fatalf("exec.runs = %d after a second reconnect pass with no new activity, want 1 (no repeat dispatch on an already-handled, still-quiet drive)", got)
 	}
 }
 
