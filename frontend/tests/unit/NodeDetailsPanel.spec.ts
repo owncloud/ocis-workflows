@@ -156,7 +156,7 @@ const outputHintStubs = {
 
 function mountOutputHintPanel(node: WorkflowNode) {
   return mount(NodeDetailsPanel, {
-    props: { node, nodes: [], edges: [] },
+    props: { node, nodes: [], edges: [], spaces: [] },
     global: {
       plugins: [createGettext({ translations: {} })],
       stubs: outputHintStubs
