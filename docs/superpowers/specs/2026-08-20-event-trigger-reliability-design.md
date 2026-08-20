@@ -214,9 +214,36 @@ itself on every execution it records.
 ### 4. Dedup and cursor advancement
 
 - Cursor is `(user_id, drive_id) -> last_checked` (a timestamp), advanced to
-  the latest `recordedTime` seen in a reconciliation pass, not to "now" —
-  so a burst of activity right at the query boundary isn't skipped on the
-  next pass.
+  wall-clock **"now"** (captured when a reconciliation pass succeeds) — not
+  to the latest activity's own `recordedTime`. An earlier draft of this
+  design advanced to the latest-seen activity's timestamp instead; traced
+  by hand and confirmed live: that makes the cursor stick at that
+  timestamp on a quiet drive, so the same activity re-enters every
+  subsequent query's window and gets redispatched on *every* later
+  reconnect, forever — not the rare boundary double-fire this section
+  originally described. "Now" self-heals: it keeps moving forward with
+  real time regardless of activity presence, so an old activity ages out
+  of the overlap window after one pass.
+- **The cursor is only ever written during a reconciliation pass — never
+  while the SSE connection is healthy and delivering events live.** This
+  means "cursor age" measures "time since we last reconciled," not "time
+  since we were last confidently listening." A connection that stays up
+  for hours (the common case — SSE connections are long-lived by design)
+  never touches its cursor during that window; when it eventually
+  reconnects, the query would otherwise span the *entire* prior uptime,
+  redispatching everything SSE already delivered live during that time.
+  To bound this, `since` is clamped to never be older than
+  `now - firstConnectLookback` (the same bound used for a true first-ever
+  pass, §1) regardless of how stale the stored cursor actually is — so a
+  long-lived reconnect, a backend restart after extended downtime, or an
+  extended activitylog outage all replay at most that bounded window, not
+  an unbounded one. This is a real limitation, not a full fix: an SSE
+  connection that's healthy for longer than the bound between reconnects
+  still relies entirely on SSE for that stretch, with no reconciliation
+  safety net until the next reconnect falls inside the bound. Refreshing
+  the cursor periodically while the connection is healthy (not just on
+  reconnect) would close that gap and is the right longer-term fix;
+  deferred as a follow-up rather than blocking this iteration.
 - Within a single pass, dedup by activity `id` (each activity has a unique
   `id` field, confirmed in every live response).
 - A small overlap window (e.g. 5s, subtracted from the stored cursor before
@@ -226,11 +253,11 @@ itself on every execution it records.
   own action nodes already tolerate re-running (e.g. `AssignTag` on an
   already-tagged file is a no-op at the API level).
 - No dedup is attempted between what SSE already delivered and what
-  reconciliation independently finds — a double-fire across the two paths is
-  possible in principle (SSE delivers, connection drops before we'd know to
-  skip it in reconciliation) but rare, and the cost is the same "safe to
-  re-run" actions as above. Not worth the complexity of cross-path dedup in
-  this iteration.
+  reconciliation independently finds — a double-fire across the two paths
+  is possible (see the clamped-lookback point above: any window
+  reconciliation queries could well have already been delivered live), and
+  the cost is the same "safe to re-run" actions as above. Not worth the
+  complexity of cross-path dedup in this iteration.
 
 ### 5. Degradation visibility
 
@@ -267,8 +294,10 @@ CREATE TABLE IF NOT EXISTS event_cursors (
 
 - Unit tests for the message-template → trigger-type mapping table
   (including: unknown message values are ignored, not errored).
-- Unit tests for cursor/dedup logic: advances to latest `recordedTime` not
-  "now", dedups by activity `id` within a pass, applies the overlap window.
+- Unit tests for cursor/dedup logic: advances to "now" not the latest
+  activity's `recordedTime`, dedups by activity `id` within a pass, applies
+  the overlap window, and clamps `since` to the `firstConnectLookback`
+  bound regardless of how stale the stored cursor is.
 - Unit test for the debounce/coalesce behavior on rapid reconnects.
 - Unit test for the bounded worker pool under a simulated mass-reconnect
   (many users' reconciliation requests queued, concurrency capped).
