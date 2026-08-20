@@ -227,3 +227,95 @@ func TestEventTriggeredWorkflowRunsOnUpload(t *testing.T) {
 		t.Fatal("expected at least one successful event-triggered execution within 30s of upload, found none")
 	}
 }
+
+// TestEventTriggeredWorkflowRecoversFromMissedSSEEvent proves the actual bug this backstop
+// exists to fix: connect automation, create an event-triggered workflow, but upload the
+// matching file *before* giving the SSE manager's periodic reconcile tick (up to
+// sseReconcileInterval, 30s — see command.sseReconcileInterval) any chance to open a live
+// connection for this workflow's trigger. Live SSE alone would silently lose this event
+// forever (see pkg/sse's package doc). The reconciliation backstop should still surface it
+// once the SSE connection does eventually establish and calls its onConnected hook.
+func TestEventTriggeredWorkflowRecoversFromMissedSSEEvent(t *testing.T) {
+	token := testToken(t)
+
+	connectRes := doRequest(t, http.MethodPost, "/me/automation", nil, true)
+	connectRes.Body.Close()
+	if connectRes.StatusCode != http.StatusOK {
+		t.Fatalf("connect automation: expected 200, got %d", connectRes.StatusCode)
+	}
+	t.Cleanup(func() {
+		res := doRequest(t, http.MethodDelete, "/me/automation", nil, true)
+		res.Body.Close()
+	})
+
+	newWorkflow := map[string]any{
+		"name":    "e2e reconciliation-backstop workflow",
+		"enabled": true,
+		"trigger": map[string]any{
+			"type": "event",
+			"event": map[string]any{
+				"type":    "upload",
+				"filters": map[string]string{"pathPrefix": "/e2e-reconcile-test", "extension": ".txt"},
+			},
+		},
+		"graph": map[string]any{
+			"nodes": []map[string]any{
+				{"id": "trigger", "type": "trigger", "position": map[string]int{"x": 0, "y": 0}, "data": map[string]any{
+					"triggerType": "event", "eventType": "upload",
+				}},
+				{"id": "llm-1", "type": "llm", "position": map[string]int{"x": 200, "y": 0}, "data": map[string]any{
+					"prompt": "Say hi",
+				}},
+			},
+			"edges": []map[string]string{{"id": "e1", "source": "trigger", "target": "llm-1"}},
+		},
+	}
+
+	createRes := doRequest(t, http.MethodPost, "/me/workflows", newWorkflow, true)
+	if createRes.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createRes.Body)
+		t.Fatalf("create workflow: expected 201, got %d: %s", createRes.StatusCode, body)
+	}
+	workflow := decodeJSON[struct {
+		ID string `json:"id"`
+	}](t, createRes)
+	t.Cleanup(func() {
+		res := doRequest(t, http.MethodDelete, "/me/workflows/"+workflow.ID, nil, true)
+		res.Body.Close()
+	})
+
+	// Deliberately upload immediately — no wait for the SSE manager to open a connection —
+	// to land inside the exact gap this backstop is meant to cover. Live SSE misses this;
+	// only the reconciliation pass on the eventual connect can recover it.
+	mkdir(t, token, "/e2e-reconcile-test")
+	uploadFile(t, token, "/e2e-reconcile-test/hello.txt", "hello from the reconciliation-backstop e2e test")
+
+	// Poll well past sseReconcileInterval (30s) plus the reconciliation grace period (5s),
+	// short of the test's own timeout — long enough for the SSE consumer to eventually
+	// connect and its onConnected hook to run a reconciliation pass.
+	deadline := time.Now().Add(50 * time.Second)
+	var found bool
+	for time.Now().Before(deadline) {
+		listRes := doRequest(t, http.MethodGet, "/me/workflows/"+workflow.ID+"/executions", nil, true)
+		list := decodeJSON[struct {
+			Value []struct {
+				TriggeredBy string `json:"triggeredBy"`
+				Status      string `json:"status"`
+			} `json:"value"`
+		}](t, listRes)
+
+		for _, exec := range list.Value {
+			if exec.TriggeredBy == "event" && exec.Status == "succeeded" {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	if !found {
+		t.Fatal("expected the reconciliation backstop to recover the missed upload within 50s, found no successful event-triggered execution")
+	}
+}
