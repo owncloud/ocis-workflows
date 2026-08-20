@@ -336,13 +336,7 @@ func (m *Manager) handleEvent(ctx context.Context, userID, authHeader, sseEventT
 			continue
 		}
 
-		if e.PathPrefix != "" && !strings.HasPrefix(resolvedPath, e.PathPrefix) {
-			continue
-		}
-		if e.Extension != "" && !strings.HasSuffix(resolvedPath, e.Extension) {
-			continue
-		}
-		if e.SpaceID != "" && e.SpaceID != payload.SpaceID {
+		if !e.MatchesFilters(resolvedPath, payload.SpaceID) {
 			continue
 		}
 
