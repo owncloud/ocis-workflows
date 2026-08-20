@@ -32,6 +32,7 @@ type discardWriter struct{}
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 type fakeGraphClient struct {
+	meUserID   string   // returned by Me; defaults to "" if unset, matching prior behavior
 	mintCalls  []string // authHeader values MintAppPassword was called with
 	mintToken  string
 	mintExpiry time.Time
@@ -40,7 +41,7 @@ type fakeGraphClient struct {
 	revokeCalls []string // old-password values RevokeAppPassword was called with
 }
 
-func (f *fakeGraphClient) Me(context.Context, string) (string, error)       { return "", nil }
+func (f *fakeGraphClient) Me(context.Context, string) (string, error)       { return f.meUserID, nil }
 func (f *fakeGraphClient) Username(context.Context, string) (string, error) { return "", nil }
 
 func (f *fakeGraphClient) MintAppPassword(_ context.Context, authHeader string, _ time.Duration, _ string) (string, time.Time, error) {
@@ -148,7 +149,9 @@ func (f *selectiveFailGraphClient) MintAppPassword(_ context.Context, authHeader
 	return f.mintToken, f.mintExpiry, nil
 }
 
-func (f *selectiveFailGraphClient) RevokeAppPassword(context.Context, string, string) error { return nil }
+func (f *selectiveFailGraphClient) RevokeAppPassword(context.Context, string, string) error {
+	return nil
+}
 
 func TestRenewDueContinuesPastAFailedRenewal(t *testing.T) {
 	db := testDB(t)

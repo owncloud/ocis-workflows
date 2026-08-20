@@ -22,9 +22,10 @@ type discardWriter struct{}
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 type fakeTriggerStore struct {
-	mu      sync.Mutex
-	entries []localdb.TriggerIndexEntry
-	cursors map[string]localdb.EventCursor // key: userID+"|"+driveID
+	mu                     sync.Mutex
+	entries                []localdb.TriggerIndexEntry
+	cursors                map[string]localdb.EventCursor // key: userID+"|"+driveID
+	listEventTriggersCalls atomic.Int32
 }
 
 func newFakeTriggerStore(entries []localdb.TriggerIndexEntry) *fakeTriggerStore {
@@ -32,6 +33,7 @@ func newFakeTriggerStore(entries []localdb.TriggerIndexEntry) *fakeTriggerStore 
 }
 
 func (f *fakeTriggerStore) ListEventTriggers(context.Context) ([]localdb.TriggerIndexEntry, error) {
+	f.listEventTriggersCalls.Add(1)
 	return f.entries, nil
 }
 
@@ -61,9 +63,11 @@ func (f *fakeTriggerStore) cursor(userID, driveID string) (localdb.EventCursor, 
 
 type fakeDriveLister struct {
 	drives []ocisclient.Drive
+	calls  atomic.Int32
 }
 
 func (f *fakeDriveLister) ListDrives(context.Context, string) ([]ocisclient.Drive, error) {
+	f.calls.Add(1)
 	return f.drives, nil
 }
 
@@ -218,6 +222,57 @@ func TestReconcileFirstEverPassExcludesActivityBeforeLookback(t *testing.T) {
 	}
 }
 
+// TestReconcileClampsQueryFloorToFirstConnectLookback proves the query floor (since) is
+// clamped to firstConnectLookback from now, regardless of how stale the stored cursor
+// actually is. Without this clamp, a long-lived healthy SSE connection reconnecting after
+// hours of uptime (UpsertEventCursor is only ever called from reconcileDrive — nothing in
+// pkg/sse ever touches the cursor while a connection stays up, so this is the normal outcome
+// of a sufficiently long-lived connection eventually reconnecting, not a rare edge case), a
+// backend restart after extended downtime, or recovery after an extended activitylog outage
+// would each compute an unbounded since and redispatch everything SSE already delivered live
+// across that whole window.
+func TestReconcileClampsQueryFloorToFirstConnectLookback(t *testing.T) {
+	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
+		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "drive-1"},
+	})
+	// Seed a cursor several hours stale — simulating a long-lived connection that only
+	// reconnects (and so only reconciles) after hours of uptime.
+	staleTime := time.Now().Add(-3 * time.Hour)
+	if err := triggers.UpsertEventCursor(t.Context(), localdb.EventCursor{UserID: "user-1", DriveID: "drive-1", LastChecked: staleTime, LastStatus: "full"}); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+
+	activities := newFakeActivityLister(map[string][]ocisclient.Activity{
+		"drive-1": {
+			// Scattered across the whole 3-hour window: one well outside a bounded
+			// lookback (SSE already delivered it live hours ago — must not be
+			// redispatched), one just inside it (must be).
+			{ID: "act-old", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}, RecordedTime: time.Now().Add(-time.Hour)},
+			{ID: "act-recent", Message: "{user} added {resource} to {folder}", Resource: ocisclient.ActivityResource{ID: testResourceID}, RecordedTime: time.Now().Add(-500 * time.Millisecond)},
+		},
+	})
+	activities.filterBySince = true // model oCIS's real server-side "timestamp>since" filtering
+	exec := &fakeExecutor{}
+	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
+
+	firstConnectLookback := 2 * time.Second // short, to keep the test fast
+	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, time.Second, time.Second, firstConnectLookback, 10, discardLogger())
+
+	before := time.Now()
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
+
+	// Dispatch happens synchronously inside Reconcile (no goroutines in this call chain), so
+	// by the time it returns, everything it's going to dispatch already has.
+	since := activities.lastSince["drive-1"]
+	if floor := before.Add(-firstConnectLookback); since.Before(floor) {
+		t.Errorf("queried since = %v, want no older than firstConnectLookback (%v) before Reconcile started (floor %v)", since, firstConnectLookback, floor)
+	}
+	if got := exec.runs.Load(); got != 1 {
+		t.Fatalf("exec.runs = %d, want exactly 1 (only the activity inside the clamped lookback window)", got)
+	}
+}
+
 func TestReconcileDispatchesMatchingActivity(t *testing.T) {
 	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
 		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload", SpaceID: "drive-1"},
@@ -249,6 +304,14 @@ func TestReconcileDispatchesMatchingActivity(t *testing.T) {
 	}
 	if cursor.LastStatus != "full" {
 		t.Errorf("cursor.LastStatus = %q, want %q", cursor.LastStatus, "full")
+	}
+
+	// Regression guard for the N+1 ListEventTriggers query dispatch used to make on every
+	// activity it found: drivesForUser and dispatch both used to re-query independently.
+	// With one activity dispatched, this pass should query event triggers exactly once
+	// (fetched up front in Reconcile and threaded through), not twice.
+	if got := triggers.listEventTriggersCalls.Load(); got != 1 {
+		t.Errorf("ListEventTriggers calls = %d, want exactly 1 per Reconcile pass (not N+1 per dispatched activity)", got)
 	}
 }
 
@@ -461,6 +524,28 @@ func TestReconcileScopedTriggerOnlyQueriesItsOwnDrive(t *testing.T) {
 	}
 	if got := activities.lastSince["drive-1"]; got.IsZero() {
 		t.Fatalf("expected drive-1 to have been queried")
+	}
+}
+
+// TestReconcileDebouncesListDrivesFanOutOnRapidReconnects proves the process-local
+// pass-level rate limit sitting on top of the durable per-drive cursor debounce: a user with
+// an unscoped trigger whose connection is flapping (reconnecting repeatedly in a short
+// window) must not fire a ListDrives request (a real GET /me/drives call) on every single
+// reconnect attempt.
+func TestReconcileDebouncesListDrivesFanOutOnRapidReconnects(t *testing.T) {
+	triggers := newFakeTriggerStore([]localdb.TriggerIndexEntry{
+		{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}, // unscoped — needs ListDrives
+	})
+	drives := &fakeDriveLister{drives: []ocisclient.Drive{{ID: "drive-1", Name: "Personal", DriveType: "personal"}}}
+	activities := newFakeActivityLister(map[string][]ocisclient.Activity{})
+
+	r := New(triggers, drives, activities, &fakePathResolver{}, &fakeExecutor{}, &fakeWorkflowStore{}, 5*time.Second, 5*time.Second, time.Hour, 10, discardLogger())
+
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
+	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==") // rapid reconnect, well within gracePeriod
+
+	if got := drives.calls.Load(); got != 1 {
+		t.Fatalf("ListDrives calls = %d, want exactly 1 for two Reconcile passes within the grace period", got)
 	}
 }
 

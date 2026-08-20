@@ -164,10 +164,6 @@ func TestTriggerIndexEntryMatchesFilters(t *testing.T) {
 // EXISTS is a no-op against a trigger_index table that already exists from before
 // path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
 // every trigger_index query with "no such column: path_prefix".
-// TestMigrateAddsColumnsToExistingTable regression-tests a real bug: CREATE TABLE IF NOT
-// EXISTS is a no-op against a trigger_index table that already exists from before
-// path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
-// every trigger_index query with "no such column: path_prefix".
 func TestMigrateAddsColumnsToExistingTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 
@@ -330,5 +326,40 @@ func TestGetReliabilityScopedPerUser(t *testing.T) {
 	}
 	if got != "full" {
 		t.Errorf("GetReliability(user-1) = %q, want %q — should not see user-2's degraded row", got, "full")
+	}
+}
+
+func TestDeleteEventCursorsRemovesOnlyThatUsersRows(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+	now := time.Now().Truncate(time.Second)
+
+	for _, c := range []EventCursor{
+		{UserID: "user-1", DriveID: "drive-1", LastChecked: now, LastStatus: "full"},
+		{UserID: "user-1", DriveID: "drive-2", LastChecked: now, LastStatus: "sse-only"},
+		{UserID: "user-2", DriveID: "drive-1", LastChecked: now, LastStatus: "full"},
+	} {
+		if err := db.UpsertEventCursor(ctx, c); err != nil {
+			t.Fatalf("UpsertEventCursor(%s, %s): %v", c.UserID, c.DriveID, err)
+		}
+	}
+
+	if err := db.DeleteEventCursors(ctx, "user-1"); err != nil {
+		t.Fatalf("DeleteEventCursors: %v", err)
+	}
+
+	if _, err := db.GetEventCursor(ctx, "user-1", "drive-1"); err != ErrNotFound {
+		t.Errorf("GetEventCursor(user-1, drive-1) after delete: err = %v, want ErrNotFound", err)
+	}
+	if _, err := db.GetEventCursor(ctx, "user-1", "drive-2"); err != ErrNotFound {
+		t.Errorf("GetEventCursor(user-1, drive-2) after delete: err = %v, want ErrNotFound", err)
+	}
+
+	got, err := db.GetEventCursor(ctx, "user-2", "drive-1")
+	if err != nil {
+		t.Fatalf("GetEventCursor(user-2, drive-1) after deleting user-1's cursors: %v", err)
+	}
+	if !got.LastChecked.Equal(now) {
+		t.Errorf("user-2's cursor was touched by deleting user-1's rows: LastChecked = %v, want %v", got.LastChecked, now)
 	}
 }

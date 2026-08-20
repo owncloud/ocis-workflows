@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,6 +76,43 @@ type fakeReconciler struct {
 
 func (f *fakeReconciler) Reconcile(context.Context, string, string) {
 	f.calls.Add(1)
+}
+
+// panicReconciler simulates a bug anywhere inside Reconcile (or anything it calls) — used to
+// prove the goroutine running it recovers instead of crashing the whole process.
+type panicReconciler struct {
+	calls atomic.Int32
+}
+
+func (f *panicReconciler) Reconcile(context.Context, string, string) {
+	f.calls.Add(1)
+	panic("simulated reconciliation panic")
+}
+
+// capturingHandler is a minimal slog.Handler that records every emitted record, so a test can
+// assert a panic was actually logged rather than just silently observing the test process
+// didn't crash.
+type capturingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *capturingHandler) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.records)
 }
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
@@ -249,6 +287,38 @@ func TestStreamOnceCallsReconcilerOnConnect(t *testing.T) {
 	}
 
 	waitFor(t, time.Second, func() bool { return reconciler.calls.Load() == 1 })
+}
+
+// TestReconciliationPanicIsRecoveredNotPropagated proves a panic anywhere inside Reconcile
+// (or anything it calls) fails only that one background reconciliation attempt instead of
+// crashing the whole process — the wrong blast radius for a fire-and-forget subsystem. If
+// the goroutine running it in consumeForUser's onConnected closure weren't wrapped in a
+// recover, this panic would propagate straight through and take down the entire test binary,
+// not just fail this test — so reaching the assertions below at all, with a log record to
+// show for it, is itself the proof the panic was actually recovered and logged.
+func TestReconciliationPanicIsRecoveredNotPropagated(t *testing.T) {
+	sseBody := "data: {}\nevent: some-unrecognized-event\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer srv.Close()
+
+	triggers := &fakeTriggerStore{
+		entries:     []localdb.TriggerIndexEntry{{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}},
+		automations: map[string]*localdb.Automation{"user-1": {UserID: "user-1", Username: "admin", AppPassword: "secret"}},
+	}
+	reconciler := &panicReconciler{}
+	handler := &capturingHandler{}
+	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, reconciler, srv.URL, false, time.Hour, slog.New(handler))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go m.consumeForUser(ctx, "user-1", 1)
+
+	waitFor(t, 2*time.Second, func() bool { return reconciler.calls.Load() >= 1 })
+	waitFor(t, 2*time.Second, func() bool { return handler.count() >= 1 })
 }
 
 // TestReconcileRetriesConsumerAfterTransientGetAutomationFailure regression-tests the bug
