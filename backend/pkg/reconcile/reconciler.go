@@ -90,9 +90,15 @@ func New(db TriggerStore, drives DriveLister, activities ActivityLister, paths P
 // Reconcile runs one reconciliation pass for userID across every drive implied by their
 // event triggers (see drivesForUser), authenticating oCIS calls with authHeader. Blocks
 // until a semaphore slot is free, so callers that don't want to block their own goroutine
-// (e.g. sse.Manager's reconnect hook) should call this via `go r.Reconcile(...)`.
+// (e.g. sse.Manager's reconnect hook) should call this via `go r.Reconcile(...)`. If ctx is
+// cancelled while still waiting for a slot (e.g. the caller's SSE consumer shut down before
+// this queued pass got to run), it bails out without acquiring a slot or touching any cursor.
 func (r *Reconciler) Reconcile(ctx context.Context, userID, authHeader string) {
-	r.sem <- struct{}{}
+	select {
+	case r.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-r.sem }()
 
 	drives, err := r.drivesForUser(ctx, userID, authHeader)
@@ -156,7 +162,19 @@ func (r *Reconciler) drivesForUser(ctx context.Context, userID, authHeader strin
 // cursor at "now" without querying — nothing to backfill for a trigger that was just
 // created. A cursor younger than gracePeriod is left alone (debounce). A failed
 // activitylog query marks the cursor "sse-only" without advancing LastChecked, so the next
-// attempt retries the same window instead of silently skipping it.
+// attempt retries the same window instead of silently skipping it — unless the failure is
+// just ctx being cancelled out from under us (e.g. the caller's SSE consumer shut down while
+// this call was in flight), in which case nothing was actually wrong with activitylog and we
+// leave the cursor untouched entirely rather than falsely marking it degraded.
+//
+// On success the cursor advances to now — the wall-clock time this pass started, not the
+// latest activity's RecordedTime. Advancing to the latest activity's own timestamp would let
+// the cursor get stuck there forever on a drive that goes quiet after that activity: since
+// the grace-period debounce compares against wall-clock now, a cursor frozen in the past
+// stays "old enough" on every subsequent pass, re-querying (and with the overlap window,
+// re-dispatching) that same already-handled activity on every future reconnect. Advancing to
+// now means the very next pass is freshly debounced instead, and overlap still covers the
+// only real gap: activity recorded between the query firing and now being captured.
 func (r *Reconciler) reconcileDrive(ctx context.Context, userID, authHeader, driveID string) {
 	now := time.Now()
 
@@ -180,26 +198,27 @@ func (r *Reconciler) reconcileDrive(ctx context.Context, userID, authHeader, dri
 	activities, err := r.activities.ListActivities(ctx, authHeader, driveID, since)
 	if err != nil {
 		r.log.Warn("reconcile: list activities", "userID", userID, "driveID", driveID, "error", err)
+		if ctx.Err() != nil {
+			// Our own context was cancelled mid-flight — activitylog isn't actually
+			// degraded, so don't mark the cursor as such.
+			return
+		}
 		if err := r.db.UpsertEventCursor(ctx, localdb.EventCursor{UserID: userID, DriveID: driveID, LastChecked: cursor.LastChecked, LastStatus: "sse-only"}); err != nil {
 			r.log.Warn("reconcile: mark cursor degraded", "userID", userID, "driveID", driveID, "error", err)
 		}
 		return
 	}
 
-	latest := cursor.LastChecked
 	seen := map[string]bool{}
 	for _, a := range activities {
 		if seen[a.ID] {
 			continue
 		}
 		seen[a.ID] = true
-		if a.RecordedTime.After(latest) {
-			latest = a.RecordedTime
-		}
 		r.dispatch(ctx, userID, authHeader, driveID, a)
 	}
 
-	if err := r.db.UpsertEventCursor(ctx, localdb.EventCursor{UserID: userID, DriveID: driveID, LastChecked: latest, LastStatus: "full"}); err != nil {
+	if err := r.db.UpsertEventCursor(ctx, localdb.EventCursor{UserID: userID, DriveID: driveID, LastChecked: now, LastStatus: "full"}); err != nil {
 		r.log.Warn("reconcile: advance cursor", "userID", userID, "driveID", driveID, "error", err)
 	}
 }
