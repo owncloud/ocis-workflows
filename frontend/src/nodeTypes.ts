@@ -1,6 +1,6 @@
 import type { ActionType, TriggerType, WorkflowNodeData } from './types/workflow'
 
-export type CanvasNodeKind = 'trigger' | 'llm' | 'action' | 'extractText'
+export type CanvasNodeKind = 'trigger' | 'llm' | 'action' | 'extractText' | 'condition'
 
 export interface NodeTypeDefinition {
   /** Picker entry id — distinct even when several entries share the same canvas node kind. */
@@ -16,6 +16,7 @@ export interface NodeTypeDefinition {
 
 export const TRIGGER_CATEGORY = 'Triggers'
 export const AI_CATEGORY = 'AI'
+export const LOGIC_CATEGORY = 'Logic'
 // File-manipulation actions only (tag, comment, move, copy, rename): things that mutate the
 // file itself. "Send Notification" is deliberately kept out of this bucket — see
 // NOTIFICATION_CATEGORY below — because it doesn't touch the file at all, it sends a message
@@ -70,6 +71,15 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     icon: 'file-text',
     category: AI_CATEGORY,
     defaultData: {}
+  },
+  {
+    id: 'condition',
+    nodeKind: 'condition',
+    label: 'Condition',
+    description: 'Branch the workflow based on a comparison, e.g. what the LLM output was',
+    icon: 'git-branch',
+    category: LOGIC_CATEGORY,
+    defaultData: { left: '', operator: 'equals', right: '' }
   },
   {
     id: 'action-tag',

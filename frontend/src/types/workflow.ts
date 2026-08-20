@@ -1,6 +1,7 @@
 export type TriggerType = 'manual' | 'schedule' | 'event'
 export type EventTriggerType = 'upload' | 'move' | 'share' | 'lock'
 export type ActionType = 'tag' | 'comment' | 'move' | 'copy' | 'rename' | 'notify'
+export type ConditionOperator = 'equals' | 'contains' | 'notEquals' | 'notContains' | 'matches'
 export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
 export type ExecutionTrigger = 'manual' | 'schedule' | 'event'
 
@@ -39,12 +40,21 @@ export interface WorkflowNodeData {
   // action node
   actionType?: ActionType
   actionParams?: Record<string, unknown>
+  // condition node — evaluated at run time as `left <operator> right`, both templates
+  // rendered against `vars` first (see backend/pkg/executor's runCondition). Distinct
+  // from the generic `condition` field below: this is the condition node's own
+  // structured comparison, not the free-form per-node gate.
+  left?: string
+  operator?: ConditionOperator
+  right?: string
+  // Generic, still-unimplemented free-form per-node gate — unrelated to the condition
+  // node above; kept as-is, not repurposed (see design notes in the PR description).
   condition?: string
 }
 
 export interface WorkflowNode {
   id: string
-  type: 'trigger' | 'llm' | 'action' | 'extractText'
+  type: 'trigger' | 'llm' | 'action' | 'extractText' | 'condition'
   position: { x: number; y: number }
   data: WorkflowNodeData
 }
@@ -53,6 +63,10 @@ export interface WorkflowEdge {
   id: string
   source: string
   target: string
+  // Which of the source node's output handles this edge starts from (e.g. "true"/
+  // "false" for a condition node's two outputs). Undefined for edges leaving every
+  // other node kind, which today only ever has a single output handle.
+  sourceHandle?: string
   data?: { condition?: string }
 }
 
