@@ -61,29 +61,36 @@ type Reconciler struct {
 	executor   Executor
 	store      WorkflowStore
 
-	gracePeriod time.Duration
-	overlap     time.Duration
-	sem         chan struct{}
-	log         *slog.Logger
+	gracePeriod          time.Duration
+	overlap              time.Duration
+	firstConnectLookback time.Duration
+	sem                  chan struct{}
+	log                  *slog.Logger
 }
 
 // New builds a Reconciler. gracePeriod is both the minimum cursor age before a
 // reconciliation pass is worth running (avoids re-querying a drive that was just checked)
 // and the debounce window for flapping SSE reconnects. overlap is subtracted from the
 // stored cursor before querying, trading a rare double-fire for never missing a boundary
-// event. maxConcurrent bounds how many reconciliation passes run at once instance-wide.
-func New(db TriggerStore, drives DriveLister, activities ActivityLister, paths PathResolver, executor Executor, store WorkflowStore, gracePeriod, overlap time.Duration, maxConcurrent int, log *slog.Logger) *Reconciler {
+// event. firstConnectLookback is how far back a (user, drive) pair with no prior cursor
+// looks on its very first reconciliation pass — generous relative to realistic SSE
+// reconnect delays (so it actually covers the "brand-new trigger racing the first SSE
+// connection" scenario this backstop exists for), but far short of activitylog's retention
+// (so it doesn't flood-dispatch a busy drive's history the first time it's ever checked).
+// maxConcurrent bounds how many reconciliation passes run at once instance-wide.
+func New(db TriggerStore, drives DriveLister, activities ActivityLister, paths PathResolver, executor Executor, store WorkflowStore, gracePeriod, overlap, firstConnectLookback time.Duration, maxConcurrent int, log *slog.Logger) *Reconciler {
 	return &Reconciler{
-		db:          db,
-		drives:      drives,
-		activities:  activities,
-		paths:       paths,
-		executor:    executor,
-		store:       store,
-		gracePeriod: gracePeriod,
-		overlap:     overlap,
-		sem:         make(chan struct{}, maxConcurrent),
-		log:         log,
+		db:                   db,
+		drives:               drives,
+		activities:           activities,
+		paths:                paths,
+		executor:             executor,
+		store:                store,
+		gracePeriod:          gracePeriod,
+		overlap:              overlap,
+		firstConnectLookback: firstConnectLookback,
+		sem:                  make(chan struct{}, maxConcurrent),
+		log:                  log,
 	}
 }
 
@@ -158,9 +165,16 @@ func (r *Reconciler) drivesForUser(ctx context.Context, userID, authHeader strin
 }
 
 // reconcileDrive checks driveID for anything since its stored cursor, dispatching matching
-// workflows and then advancing the cursor. A brand-new (user, driveID) pair seeds its
-// cursor at "now" without querying — nothing to backfill for a trigger that was just
-// created. A cursor younger than gracePeriod is left alone (debounce). A failed
+// workflows and then advancing the cursor. A brand-new (user, driveID) pair — no prior
+// cursor at all — is exactly the scenario this backstop exists for: a trigger just created,
+// racing the very first SSE connection. So instead of seeding the cursor at "now" and
+// skipping the query (which would silently miss precisely that race), it synthesizes a
+// starting cursor firstConnectLookback in the past and falls through to the same
+// query/dispatch/advance logic below as any other pass — bounded so a first-ever check on
+// an old, busy drive doesn't flood-dispatch its whole history, just the genuine
+// just-created-trigger window. A cursor younger than gracePeriod is left alone (debounce);
+// the synthesized first-ever cursor's age (firstConnectLookback) is expected to comfortably
+// exceed gracePeriod, so a genuine first-ever pass always proceeds to query. A failed
 // activitylog query marks the cursor "sse-only" without advancing LastChecked, so the next
 // attempt retries the same window instead of silently skipping it — unless the failure is
 // just ctx being cancelled out from under us (e.g. the caller's SSE consumer shut down while
@@ -184,10 +198,12 @@ func (r *Reconciler) reconcileDrive(ctx context.Context, userID, authHeader, dri
 			r.log.Warn("reconcile: read cursor", "userID", userID, "driveID", driveID, "error", err)
 			return
 		}
-		if err := r.db.UpsertEventCursor(ctx, localdb.EventCursor{UserID: userID, DriveID: driveID, LastChecked: now, LastStatus: "full"}); err != nil {
-			r.log.Warn("reconcile: seed cursor", "userID", userID, "driveID", driveID, "error", err)
-		}
-		return
+		// No prior cursor for this (user, drive) pair — this is the very first
+		// reconciliation pass ever run for it, which is exactly the scenario the
+		// backstop exists to cover: a brand-new event trigger whose upload raced the
+		// SSE connection. Look back a bounded window instead of skipping the query
+		// entirely, so that race is actually recoverable on the very first pass.
+		cursor = &localdb.EventCursor{UserID: userID, DriveID: driveID, LastChecked: now.Add(-r.firstConnectLookback), LastStatus: "full"}
 	}
 
 	if now.Sub(cursor.LastChecked) < r.gracePeriod {
