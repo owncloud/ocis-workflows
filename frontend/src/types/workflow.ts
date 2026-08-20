@@ -1,6 +1,7 @@
 export type TriggerType = 'manual' | 'schedule' | 'event'
 export type EventTriggerType = 'upload' | 'move' | 'share' | 'lock'
-export type ActionType = 'tag' | 'comment' | 'move' | 'copy' | 'rename' | 'notify'
+export type ActionType = 'tag' | 'comment' | 'move' | 'copy' | 'rename' | 'notify' | 'share'
+export type ShareRole = 'viewer' | 'editor'
 export type ExecutionStatus = 'running' | 'succeeded' | 'failed'
 export type ExecutionTrigger = 'manual' | 'schedule' | 'event'
 

@@ -110,6 +110,19 @@
               :placeholder="'{{file.name}}-reviewed'"
             />
           </template>
+          <template v-else-if="node.data.actionType === 'share'">
+            <oc-text-input
+              v-model="paramRecipient"
+              class="workflows-ndv-field"
+              :label="$gettext('Recipient (user email or group name)')"
+              placeholder="accounting@example.com"
+            />
+            <label class="workflows-ndv-label" for="ndv-role">{{ $gettext('Role') }}</label>
+            <select id="ndv-role" v-model="paramRole" class="workflows-ndv-select">
+              <option value="viewer">{{ $gettext('Viewer') }}</option>
+              <option value="editor">{{ $gettext('Editor') }}</option>
+            </select>
+          </template>
           <template v-else-if="node.data.actionType === 'notify'">
             <oc-text-input
               v-model="paramTarget"
@@ -160,7 +173,7 @@ import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { findNodeTypeForNode } from '../nodeTypes'
 import { hasUpstreamFileSource, isFileDependentActionType } from '../utils/flowValidation'
-import type { EventTriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
+import type { EventTriggerType, ShareRole, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
 const props = defineProps<{ node: WorkflowNode; nodes: WorkflowNode[]; edges: WorkflowEdge[] }>()
 const emit = defineEmits<{ (e: 'update', data: WorkflowNodeData): void; (e: 'close'): void }>()
@@ -276,6 +289,12 @@ const paramDestination = actionParam('destination')
 const paramNewName = actionParam('newName')
 const paramTarget = actionParam('target')
 const paramMessage = actionParam('message')
+const paramRecipient = actionParam('recipient')
+
+const paramRole = computed<ShareRole>({
+  get: () => (props.node.data.actionParams?.role as ShareRole) ?? 'viewer',
+  set: (value) => patch({ actionParams: { ...props.node.data.actionParams, role: value } })
+})
 </script>
 
 <style scoped>
