@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 )
 
@@ -51,9 +51,8 @@ type activitiesResponse struct {
 // under it, via depth:-1) strictly after since, via oCIS's activitylog Graph extension.
 func (c *Client) ListActivities(ctx context.Context, authHeader, driveID string, since time.Time) ([]Activity, error) {
 	kql := fmt.Sprintf("itemid:%s AND depth:-1 AND timestamp>%s", driveID, since.UTC().Format(time.RFC3339))
-	// Encode spaces as +, which is standard for URL query strings, preserving KQL syntax characters.
-	kqlForURL := strings.ReplaceAll(kql, " ", "+")
-	u := c.baseURL + "/graph/v1beta1/extensions/org.libregraph/activities?kql=" + kqlForURL
+	u := c.baseURL + "/graph/v1beta1/extensions/org.libregraph/activities?" +
+		url.Values{"kql": {kql}}.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
