@@ -69,6 +69,14 @@ func (f *fakeExecutor) Run(_ context.Context, _ string, wf model.WorkflowDefinit
 	return &model.ExecutionRecord{ID: "exec-1", WorkflowID: wf.ID, TriggeredBy: triggeredBy, Status: "succeeded"}
 }
 
+type fakeReconciler struct {
+	calls atomic.Int32
+}
+
+func (f *fakeReconciler) Reconcile(context.Context, string, string) {
+	f.calls.Add(1)
+}
+
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -107,8 +115,8 @@ func TestStreamOnceDispatchesMatchingEventTrigger(t *testing.T) {
 	paths := &fakePathResolver{path: "/Invoices/foo.pdf"}
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, paths, exec, srv.URL, false, time.Hour, discardLogger())
-	err := m.streamOnce(t.Context(), "user-1", "Basic dGVzdA==")
+	m := New(triggers, store, paths, exec, &fakeReconciler{}, srv.URL, false, time.Hour, discardLogger())
+	err := m.streamOnce(t.Context(), "user-1", "Basic dGVzdA==", nil)
 	if err != nil {
 		t.Fatalf("streamOnce: %v", err)
 	}
@@ -131,7 +139,7 @@ func TestHandleEventSkipsInternalBookkeepingPath(t *testing.T) {
 	paths := &fakePathResolver{path: "/.workflows/executions/wf-1/exec-1.json"}
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, paths, exec, "http://unused", false, time.Hour, discardLogger())
+	m := New(triggers, store, paths, exec, &fakeReconciler{}, "http://unused", false, time.Hour, discardLogger())
 	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"s"}`)
 
 	time.Sleep(50 * time.Millisecond)
@@ -152,7 +160,7 @@ func TestHandleEventSkipsNonMatchingPathPrefix(t *testing.T) {
 	paths := &fakePathResolver{path: "/Photos/vacation.jpg"} // does not match /Invoices
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, paths, exec, "http://unused", false, time.Hour, discardLogger())
+	m := New(triggers, store, paths, exec, &fakeReconciler{}, "http://unused", false, time.Hour, discardLogger())
 	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"s"}`)
 
 	time.Sleep(50 * time.Millisecond)
@@ -172,7 +180,7 @@ func TestHandleEventSkipsNonMatchingSpace(t *testing.T) {
 	}}
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, "http://unused", false, time.Hour, discardLogger())
+	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, &fakeReconciler{}, "http://unused", false, time.Hour, discardLogger())
 	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"space-b"}`)
 
 	time.Sleep(50 * time.Millisecond)
@@ -192,7 +200,7 @@ func TestHandleEventMatchesSpecificSpace(t *testing.T) {
 	}}
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, "http://unused", false, time.Hour, discardLogger())
+	m := New(triggers, store, &fakePathResolver{path: "/Invoices/foo.pdf"}, exec, &fakeReconciler{}, "http://unused", false, time.Hour, discardLogger())
 	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "postprocessing-finished", `{"itemid":"i","spaceid":"space-a"}`)
 
 	waitFor(t, 2*time.Second, func() bool { return exec.runs.Load() == 1 })
@@ -207,13 +215,40 @@ func TestHandleEventIgnoresUnmappedSSEEventType(t *testing.T) {
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
 	exec := &fakeExecutor{}
 
-	m := New(triggers, store, &fakePathResolver{}, exec, "http://unused", false, time.Hour, discardLogger())
+	m := New(triggers, store, &fakePathResolver{}, exec, &fakeReconciler{}, "http://unused", false, time.Hour, discardLogger())
 	m.handleEvent(t.Context(), "user-1", "Basic dGVzdA==", "some-unrecognized-event", `{}`)
 
 	time.Sleep(50 * time.Millisecond)
 	if got := exec.runs.Load(); got != 0 {
 		t.Fatalf("expected 0 runs for an unmapped SSE event type, got %d", got)
 	}
+}
+
+// TestStreamOnceCallsReconcilerOnConnect regression-tests the exact race this backstop
+// exists to close: a brand-new SSE consumer must trigger a reconciliation pass for its
+// user as soon as the connection is actually established, not just periodically or never.
+func TestStreamOnceCallsReconcilerOnConnect(t *testing.T) {
+	sseBody := "data: {}\nevent: some-unrecognized-event\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer srv.Close()
+
+	triggers := &fakeTriggerStore{
+		entries:     []localdb.TriggerIndexEntry{{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}},
+		automations: map[string]*localdb.Automation{"user-1": {UserID: "user-1", Username: "admin", AppPassword: "secret"}},
+	}
+	reconciler := &fakeReconciler{}
+	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, reconciler, srv.URL, false, time.Hour, discardLogger())
+
+	err := m.streamOnce(t.Context(), "user-1", "Basic dGVzdA==", func() { reconciler.Reconcile(t.Context(), "user-1", "Basic dGVzdA==") })
+	if err != nil {
+		t.Fatalf("streamOnce: %v", err)
+	}
+
+	waitFor(t, time.Second, func() bool { return reconciler.calls.Load() == 1 })
 }
 
 // TestReconcileRetriesConsumerAfterTransientGetAutomationFailure regression-tests the bug
@@ -228,7 +263,7 @@ func TestReconcileRetriesConsumerAfterTransientGetAutomationFailure(t *testing.T
 		automations: map[string]*localdb.Automation{}, // automation not connected yet
 	}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
-	m := New(triggers, store, &fakePathResolver{}, &fakeExecutor{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
+	m := New(triggers, store, &fakePathResolver{}, &fakeExecutor{}, &fakeReconciler{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -273,7 +308,7 @@ func TestKickTriggersImmediateReconcile(t *testing.T) {
 			"user-1":    {UserID: "user-1", Username: "admin", AppPassword: "x"},
 		},
 	}
-	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
+	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, &fakeReconciler{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -307,7 +342,7 @@ func TestReconcileStartsAndStopsConsumersAsTriggersChange(t *testing.T) {
 		entries:     []localdb.TriggerIndexEntry{{WorkflowID: "wf-1", UserID: "user-1", TriggerType: "event", EventType: "upload"}},
 		automations: map[string]*localdb.Automation{"user-1": {UserID: "user-1", Username: "admin", AppPassword: "x"}},
 	}
-	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
+	m := New(triggers, &fakeWorkflowStore{}, &fakePathResolver{}, &fakeExecutor{}, &fakeReconciler{}, "http://unused-will-fail-fast", false, time.Hour, discardLogger())
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
