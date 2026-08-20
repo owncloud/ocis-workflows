@@ -3,6 +3,7 @@ package ocisclient
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,9 +17,14 @@ const activitiesFixture = `{"value":[
 ]}`
 
 func TestListActivitiesParsesRealResponseShape(t *testing.T) {
-	var gotPath, gotAuth string
+	var gotAuth string
+	var gotKQL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		if r.URL.Path != "/graph/v1beta1/extensions/org.libregraph/activities" {
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return
+		}
+		gotKQL = r.URL.Query().Get("kql")
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(activitiesFixture))
@@ -35,11 +41,14 @@ func TestListActivitiesParsesRealResponseShape(t *testing.T) {
 	if gotAuth != "Basic dGVzdA==" {
 		t.Errorf("Authorization header = %q, want %q", gotAuth, "Basic dGVzdA==")
 	}
-	if want := "/graph/v1beta1/extensions/org.libregraph/activities"; !containsPrefix(gotPath, want) {
-		t.Errorf("request path = %q, want prefix %q", gotPath, want)
+	if !strings.Contains(gotKQL, "itemid:drive-1") {
+		t.Errorf("query kql missing itemid clause: %q", gotKQL)
 	}
-	if !containsAll(gotPath, "itemid:drive-1", "depth:-1", "timestamp>2026-08-20T15:00:00Z") {
-		t.Errorf("query kql missing expected clauses: %q", gotPath)
+	if !strings.Contains(gotKQL, "depth:-1") {
+		t.Errorf("query kql missing depth clause: %q", gotKQL)
+	}
+	if !strings.Contains(gotKQL, "timestamp>2026-08-20T15:00:00Z") {
+		t.Errorf("query kql missing timestamp clause: %q", gotKQL)
 	}
 
 	if len(activities) != 2 {
@@ -75,6 +84,33 @@ func TestListActivitiesParsesRealResponseShape(t *testing.T) {
 	}
 }
 
+func TestListActivitiesWithCompoundDriveID(t *testing.T) {
+	var gotKQL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKQL = r.URL.Query().Get("kql")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, false)
+	// Use a realistic compound driveID with $ and ! to verify proper percent-encoding round-trip
+	compoundDriveID := "31887342-c711-4c0f-973a-bf2a23400fd9$7ef1babf-8c0d-43b8-936d-08c18cbe5769!f3432faf-bf88-42d8-821f-7bfeb409e6b2"
+	since := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
+	_, err := c.ListActivities(t.Context(), "Basic dGVzdA==", compoundDriveID, since)
+	if err != nil {
+		t.Fatalf("ListActivities: %v", err)
+	}
+
+	// After URL decoding, the KQL should contain the compound ID unencoded
+	if !strings.Contains(gotKQL, compoundDriveID) {
+		t.Errorf("decoded query kql missing compound driveID: got %q, want to contain %q", gotKQL, compoundDriveID)
+	}
+	if !strings.Contains(gotKQL, "itemid:"+compoundDriveID) {
+		t.Errorf("decoded query kql missing itemid clause with compound ID: got %q", gotKQL)
+	}
+}
+
 func TestListActivitiesNonOKStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -86,26 +122,4 @@ func TestListActivitiesNonOKStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("ListActivities: err = nil, want an error for a non-200 response")
 	}
-}
-
-func containsPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-
-func containsAll(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if !contains(s, sub) {
-			return false
-		}
-	}
-	return true
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
