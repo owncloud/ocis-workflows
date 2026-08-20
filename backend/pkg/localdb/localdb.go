@@ -7,7 +7,9 @@ package localdb
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -29,15 +31,22 @@ type Automation struct {
 	ConnectedAt time.Time
 }
 
-// TriggerIndexEntry is a denormalized pointer to a workflow with an active schedule/event trigger.
+// TriggerIndexEntry is a denormalized pointer to a workflow with an active schedule/event/
+// webhook trigger.
 type TriggerIndexEntry struct {
 	WorkflowID  string
 	UserID      string
-	TriggerType string // schedule | event
+	TriggerType string // schedule | event | webhook
 	Schedule    string
 	EventType   string
 	PathPrefix  string // event trigger filter, mirrors model.EventFilters
 	Extension   string // event trigger filter, mirrors model.EventFilters
+	// WebhookToken is the bearer credential for the webhook trigger's URL
+	// (POST /hooks/{workflowId}/{token}). Empty for non-webhook entries. Encrypted at rest
+	// the same way Automation.AppPassword is (see encryptWebhookToken/decryptWebhookToken)
+	// — never logged, never returned by any endpoint except the deliberate reveal/rotate
+	// actions in pkg/service.
+	WebhookToken string
 }
 
 // DB is the sidecar's local SQLite-backed store.
@@ -93,8 +102,10 @@ func (db *DB) migrate() error {
 	}
 
 	// CREATE TABLE IF NOT EXISTS only handles brand-new databases — a trigger_index table
-	// created before path_prefix/extension existed needs these added explicitly.
-	for _, col := range []string{"path_prefix", "extension"} {
+	// created before path_prefix/extension/webhook_token existed needs these added
+	// explicitly. webhook_token's default of plaintext '' is deliberate (see
+	// decryptWebhookToken): it means "no token", not "empty ciphertext".
+	for _, col := range []string{"path_prefix", "extension", "webhook_token"} {
 		if err := db.addColumnIfMissing("trigger_index", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -210,20 +221,82 @@ func (db *DB) ListAutomations(ctx context.Context) ([]Automation, error) {
 }
 
 // UpsertTriggerIndexEntry stores or replaces a workflow's trigger index entry. Called
-// whenever a workflow with a schedule/event trigger is created or updated.
+// whenever a workflow with a schedule/event/webhook trigger is created or updated.
 func (db *DB) UpsertTriggerIndexEntry(ctx context.Context, e TriggerIndexEntry) error {
-	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+	encryptedToken, err := db.encryptWebhookToken(e.WebhookToken)
+	if err != nil {
+		return fmt.Errorf("encrypt webhook token: %w", err)
+	}
+	_, err = db.sql.ExecContext(ctx, `
+		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension, webhook_token)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workflow_id) DO UPDATE SET
 			user_id = excluded.user_id,
 			trigger_type = excluded.trigger_type,
 			schedule = excluded.schedule,
 			event_type = excluded.event_type,
 			path_prefix = excluded.path_prefix,
-			extension = excluded.extension
-	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType, e.PathPrefix, e.Extension)
+			extension = excluded.extension,
+			webhook_token = excluded.webhook_token
+	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType, e.PathPrefix, e.Extension, encryptedToken)
 	return err
+}
+
+// GetTriggerIndexEntry returns the single trigger index entry for workflowID, used by the
+// webhook route to look up and verify a caller-supplied token without listing every trigger
+// in the database on every request.
+func (db *DB) GetTriggerIndexEntry(ctx context.Context, workflowID string) (*TriggerIndexEntry, error) {
+	row := db.sql.QueryRowContext(ctx, `
+		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension, webhook_token
+		FROM trigger_index WHERE workflow_id = ?
+	`, workflowID)
+
+	var e TriggerIndexEntry
+	var encryptedToken string
+	if err := row.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension, &encryptedToken); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	token, err := db.decryptWebhookToken(encryptedToken)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt webhook token: %w", err)
+	}
+	e.WebhookToken = token
+	return &e, nil
+}
+
+// encryptWebhookToken seals a webhook token with the same secretbox used for app-passwords.
+// An empty token (every non-webhook trigger, and any webhook trigger whose token hasn't
+// been generated yet) is stored as plaintext "" rather than a sealed empty string, so
+// pre-existing rows added via ALTER TABLE ... DEFAULT ” (see migrate) don't need a
+// backfill and decryptWebhookToken doesn't need to distinguish "" from a real ciphertext.
+func (db *DB) encryptWebhookToken(token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	return db.box.Seal(token)
+}
+
+// decryptWebhookToken is encryptWebhookToken's inverse. See its comment for why "" is
+// special-cased rather than run through Open.
+func (db *DB) decryptWebhookToken(encrypted string) (string, error) {
+	if encrypted == "" {
+		return "", nil
+	}
+	return db.box.Open(encrypted)
+}
+
+// NewWebhookToken generates a fresh random webhook trigger token: 32 bytes of crypto/rand,
+// hex-encoded (64 chars) — comparable entropy to a typical bearer API key. Matched against
+// an incoming request's token in constant time by the hooks handler (see pkg/service).
+func NewWebhookToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // DeleteTriggerIndexEntry removes a workflow's trigger index entry (called when a workflow
@@ -245,7 +318,7 @@ func (db *DB) ListEventTriggers(ctx context.Context) ([]TriggerIndexEntry, error
 
 func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIndexEntry, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension
+		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension, webhook_token
 		FROM trigger_index WHERE trigger_type = ?
 	`, triggerType)
 	if err != nil {
@@ -256,9 +329,15 @@ func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIn
 	var out []TriggerIndexEntry
 	for rows.Next() {
 		var e TriggerIndexEntry
-		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension); err != nil {
+		var encryptedToken string
+		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension, &encryptedToken); err != nil {
 			return nil, err
 		}
+		token, err := db.decryptWebhookToken(encryptedToken)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt webhook token for workflow %s: %w", e.WorkflowID, err)
+		}
+		e.WebhookToken = token
 		out = append(out, e)
 	}
 	return out, rows.Err()

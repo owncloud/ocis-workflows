@@ -1,5 +1,5 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
 import { createGettext } from 'vue3-gettext'
 import NodeDetailsPanel from '../../src/components/NodeDetailsPanel.vue'
 import type { WorkflowEdge, WorkflowNode } from '../../src/types/workflow'
@@ -226,3 +226,108 @@ describe('NodeDetailsPanel output hint', () => {
     expect(text).toContain('{{file.content}}')
   })
 })
+
+const getWebhookToken = vi.fn()
+const rotateWebhookToken = vi.fn()
+vi.mock('../../src/composables/useWorkflowsApi', () => ({
+  useWorkflowsApi: () => ({ getWebhookToken, rotateWebhookToken })
+}))
+
+const webhookNode = (): WorkflowNode => ({
+  id: 'trigger',
+  type: 'trigger',
+  position: { x: 0, y: 0 },
+  data: { triggerType: 'webhook' }
+})
+
+describe('NodeDetailsPanel — webhook trigger', () => {
+  beforeEach(() => {
+    getWebhookToken.mockReset()
+    rotateWebhookToken.mockReset()
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true
+    })
+  })
+
+  it('prompts to save first when the workflow has no id yet', () => {
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: webhookNode(), nodes: [], edges: [], workflowId: '', backendUrl: 'https://example.test/workflows/api/v1beta1' },
+      global: { plugins: [gettext] }
+    })
+
+    expect(wrapper.text()).toContain('Save the workflow to generate its webhook URL.')
+    expect(getWebhookToken).not.toHaveBeenCalled()
+  })
+
+  it('treats the "new" route param the same as an unsaved workflow', () => {
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: webhookNode(), nodes: [], edges: [], workflowId: 'new', backendUrl: 'https://example.test/workflows/api/v1beta1' },
+      global: { plugins: [gettext] }
+    })
+
+    expect(wrapper.text()).toContain('Save the workflow to generate its webhook URL.')
+    expect(getWebhookToken).not.toHaveBeenCalled()
+  })
+
+  it('fetches and shows a masked URL once the workflow is saved, revealing it on demand', async () => {
+    getWebhookToken.mockResolvedValue({ token: 'abc123', url: 'https://example.test/workflows/hooks/wf-1/abc123' })
+
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: webhookNode(), nodes: [], edges: [], workflowId: 'wf-1', backendUrl: 'https://example.test/workflows/api/v1beta1' },
+      global: { plugins: [gettext] }
+    })
+    await flushAll()
+
+    expect(getWebhookToken).toHaveBeenCalledWith('wf-1')
+    const value = wrapper.get('[data-test="webhook-url"]')
+    expect(value.text()).not.toContain('abc123')
+    expect(value.text()).toMatch(/•+/)
+
+    await wrapper.get('[data-test="webhook-reveal"]').trigger('click')
+    await flushAll()
+
+    expect(wrapper.get('[data-test="webhook-url"]').text()).toBe('https://example.test/workflows/hooks/wf-1/abc123')
+  })
+
+  it('copies the URL to the clipboard without requiring reveal first', async () => {
+    getWebhookToken.mockResolvedValue({ token: 'abc123', url: 'https://example.test/workflows/hooks/wf-1/abc123' })
+
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: webhookNode(), nodes: [], edges: [], workflowId: 'wf-1', backendUrl: 'https://example.test/workflows/api/v1beta1' },
+      global: { plugins: [gettext] }
+    })
+    await flushAll()
+
+    await wrapper.get('[data-test="webhook-copy"]').trigger('click')
+    await flushAll()
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://example.test/workflows/hooks/wf-1/abc123')
+    // Copying must not force-reveal the value in the UI.
+    expect(wrapper.get('[data-test="webhook-url"]').text()).not.toContain('abc123')
+  })
+
+  it('rotates the token, replacing the displayed value', async () => {
+    getWebhookToken.mockResolvedValue({ token: 'abc123', url: 'https://example.test/workflows/hooks/wf-1/abc123' })
+    rotateWebhookToken.mockResolvedValue({ token: 'rotated', url: 'https://example.test/workflows/hooks/wf-1/rotated' })
+
+    const wrapper = mount(NodeDetailsPanel, {
+      props: { node: webhookNode(), nodes: [], edges: [], workflowId: 'wf-1', backendUrl: 'https://example.test/workflows/api/v1beta1' },
+      global: { plugins: [gettext] }
+    })
+    await flushAll()
+
+    await wrapper.get('[data-test="webhook-rotate"]').trigger('click')
+    await flushAll()
+
+    expect(rotateWebhookToken).toHaveBeenCalledWith('wf-1')
+    expect(wrapper.get('[data-test="webhook-url"]').text()).toBe('https://example.test/workflows/hooks/wf-1/rotated')
+  })
+})
+
+// A couple of microtask ticks: one for the API promise, one for Vue's reactivity flush.
+const flushAll = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}

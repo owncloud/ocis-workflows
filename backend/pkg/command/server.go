@@ -19,6 +19,7 @@ import (
 	"github.com/owncloud/ocis-workflows/pkg/localdb"
 	"github.com/owncloud/ocis-workflows/pkg/logging"
 	"github.com/owncloud/ocis-workflows/pkg/ocisclient"
+	"github.com/owncloud/ocis-workflows/pkg/ratelimit"
 	"github.com/owncloud/ocis-workflows/pkg/scheduler"
 	debugserver "github.com/owncloud/ocis-workflows/pkg/server/debug"
 	httpserver "github.com/owncloud/ocis-workflows/pkg/server/http"
@@ -39,6 +40,14 @@ const sseReconcileInterval = 30 * time.Second
 // nearing expiry. Daily is frequent enough given the 14-day renewal window and 90-day
 // credential lifetime.
 const renewalTickInterval = 24 * time.Hour
+
+// webhookRateLimitMax/webhookRateLimitWindow bound how often a single webhook trigger
+// token may be used. A compensating control for a route that, by design, bypasses
+// Validator.Middleware's normal bearer-token auth (see pkg/server/http/server.go) — the
+// URL's token is the only gate, so nothing else stops a caller from flooding a known
+// (or guessed) one.
+const webhookRateLimitMax = 30
+const webhookRateLimitWindow = time.Minute
 
 // RunServer starts the public API server, the debug server, and the background schedule
 // evaluator, and blocks until any of them exits or the process receives an interrupt/
@@ -76,12 +85,15 @@ func RunServer(cfg config.Config) error {
 
 	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, ocisClient, db, sseManager, log)
 	automationHandler := service.NewAutomationHandler(automationService, ocisClient)
+	webhookLimiter := ratelimit.New(webhookRateLimitMax, webhookRateLimitWindow)
+	hooksHandler := service.NewHooksHandler(db, db, store, graphExecutor, webhookLimiter, log)
 
 	apiHandler := httpserver.New(httpserver.Options{
 		AllowedOrigin: cfg.AllowedOrigin,
 		Validator:     validator,
 		Workflows:     workflowsHandler,
 		Automation:    automationHandler,
+		Hooks:         hooksHandler,
 		Logger:        log,
 	})
 

@@ -133,6 +133,106 @@ func TestTriggerIndex(t *testing.T) {
 	}
 }
 
+func TestWebhookTriggerTokenIsEncryptedAtRest(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+
+	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
+		WorkflowID: "wf-hook", UserID: "user-1", TriggerType: "webhook", WebhookToken: "s3cr3t-webhook-token",
+	}); err != nil {
+		t.Fatalf("UpsertTriggerIndexEntry: %v", err)
+	}
+
+	got, err := db.GetTriggerIndexEntry(ctx, "wf-hook")
+	if err != nil {
+		t.Fatalf("GetTriggerIndexEntry: %v", err)
+	}
+	if got.WebhookToken != "s3cr3t-webhook-token" {
+		t.Fatalf("GetTriggerIndexEntry().WebhookToken = %q, want original token", got.WebhookToken)
+	}
+	if got.TriggerType != "webhook" {
+		t.Fatalf("GetTriggerIndexEntry().TriggerType = %q, want webhook", got.TriggerType)
+	}
+
+	var raw string
+	if err := db.sql.QueryRow(`SELECT webhook_token FROM trigger_index WHERE workflow_id = ?`, "wf-hook").Scan(&raw); err != nil {
+		t.Fatalf("read raw column: %v", err)
+	}
+	if raw == "s3cr3t-webhook-token" {
+		t.Fatal("webhook token stored in plaintext")
+	}
+
+	// Rotating (re-upserting with a new token) must replace, not merely append.
+	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
+		WorkflowID: "wf-hook", UserID: "user-1", TriggerType: "webhook", WebhookToken: "rotated-token",
+	}); err != nil {
+		t.Fatalf("UpsertTriggerIndexEntry (rotate): %v", err)
+	}
+	got, err = db.GetTriggerIndexEntry(ctx, "wf-hook")
+	if err != nil {
+		t.Fatalf("GetTriggerIndexEntry after rotate: %v", err)
+	}
+	if got.WebhookToken != "rotated-token" {
+		t.Fatalf("GetTriggerIndexEntry().WebhookToken after rotate = %q", got.WebhookToken)
+	}
+}
+
+func TestGetTriggerIndexEntryNotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := db.GetTriggerIndexEntry(t.Context(), "does-not-exist"); err != ErrNotFound {
+		t.Fatalf("GetTriggerIndexEntry() error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestNonWebhookEntriesRoundTripWithEmptyWebhookToken guards against a subtle migration
+// bug: encrypting/decrypting every trigger_index row's webhook_token unconditionally would
+// fail for schedule/event entries whose webhook_token defaults to plaintext "" (added via
+// ALTER TABLE ... DEFAULT ”, never through Seal) — empty must stay empty, not attempt (and
+// fail) decryption as if it were ciphertext.
+func TestNonWebhookEntriesRoundTripWithEmptyWebhookToken(t *testing.T) {
+	db := testDB(t)
+	ctx := t.Context()
+
+	if err := db.UpsertTriggerIndexEntry(ctx, TriggerIndexEntry{
+		WorkflowID: "wf-sched", UserID: "user-1", TriggerType: "schedule", Schedule: "0 * * * *",
+	}); err != nil {
+		t.Fatalf("UpsertTriggerIndexEntry: %v", err)
+	}
+
+	got, err := db.GetTriggerIndexEntry(ctx, "wf-sched")
+	if err != nil {
+		t.Fatalf("GetTriggerIndexEntry: %v", err)
+	}
+	if got.WebhookToken != "" {
+		t.Fatalf("GetTriggerIndexEntry().WebhookToken = %q, want empty", got.WebhookToken)
+	}
+
+	schedules, err := db.ListScheduleTriggers(ctx)
+	if err != nil {
+		t.Fatalf("ListScheduleTriggers: %v", err)
+	}
+	if len(schedules) != 1 || schedules[0].WebhookToken != "" {
+		t.Fatalf("ListScheduleTriggers() = %+v", schedules)
+	}
+}
+
+func TestNewWebhookTokenGeneratesUniqueValues(t *testing.T) {
+	a, err := NewWebhookToken()
+	if err != nil {
+		t.Fatalf("NewWebhookToken: %v", err)
+	}
+	b, err := NewWebhookToken()
+	if err != nil {
+		t.Fatalf("NewWebhookToken: %v", err)
+	}
+	if a == b {
+		t.Fatal("NewWebhookToken produced the same value twice")
+	}
+	if len(a) < 32 {
+		t.Fatalf("NewWebhookToken produced a suspiciously short token: %q", a)
+	}
+}
+
 // TestMigrateAddsColumnsToExistingTable regression-tests a real bug: CREATE TABLE IF NOT
 // EXISTS is a no-op against a trigger_index table that already exists from before
 // path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
