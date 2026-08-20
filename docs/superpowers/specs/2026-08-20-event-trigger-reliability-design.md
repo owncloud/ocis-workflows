@@ -139,9 +139,20 @@ indicating the connection was down for a meaningful span. If so, run one
 reconciliation pass across that user's derived drive scope (§1), then
 advance the cursor.
 
-- **First-ever connect for a user** (no stored cursor row) starts the cursor
-  at "now" — nothing to backfill, matching current SSE behavior for a
-  brand-new trigger with no pre-existing gap.
+- **First-ever connect for a user** (no stored cursor row) is exactly the
+  original bug's scenario — a brand-new trigger whose upload can race the
+  very first SSE connection — so it must not be treated as "nothing to
+  backfill." Instead of seeding the cursor at "now" and skipping the query,
+  the first pass looks back a bounded window (`firstConnectLookback`, 5m
+  default — generous versus realistic reconnect delays, short versus
+  activitylog's multi-day retention so an old/busy drive's first-ever pass
+  doesn't flood-dispatch weeks of history) and otherwise runs the exact same
+  query/dispatch/advance-to-now logic as a warm pass. (Caught late, during
+  the implementation pass, by an e2e test whose first isolated run against a
+  byte-fresh database failed for exactly this reason — an earlier version of
+  this section's reasoning was wrong in the same way §4's cursor-advancement
+  reasoning was: not thinking through the exact timing relative to the event
+  being recovered.)
 - **Flapping reconnects** debounce: if reconnects happen repeatedly in a
   short window, coalesce into a single reconciliation pass once the
   connection has been stable for e.g. 5s (tunable, same order as the grace
