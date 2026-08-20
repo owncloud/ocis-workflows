@@ -144,6 +144,14 @@ func (s *Service) Disconnect(ctx context.Context, authHeader string) error {
 	if err := s.db.DeleteAutomation(ctx, userID); err != nil {
 		return fmt.Errorf("delete stored automation credential: %w", err)
 	}
+
+	// Also forget any reconciliation cursors — otherwise a drive that was marked "sse-only"
+	// keeps reporting degraded reliability forever with no way to clear it, and rows for a
+	// disconnected user just accumulate indefinitely.
+	if err := s.db.DeleteEventCursors(ctx, userID); err != nil {
+		return fmt.Errorf("delete stored event cursors: %w", err)
+	}
+
 	s.log.Info("automation disconnected", "userID", userID)
 	return nil
 }

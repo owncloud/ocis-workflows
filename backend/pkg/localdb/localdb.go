@@ -335,6 +335,15 @@ func (db *DB) UpsertEventCursor(ctx context.Context, c EventCursor) error {
 	return err
 }
 
+// DeleteEventCursors removes every stored event cursor for userID (mirrors DeleteAutomation).
+// Called when a user disconnects automation, so a drive that was marked "sse-only" doesn't
+// keep reporting degraded reliability forever with no way to clear it, and so cursor rows
+// for a user who's disconnected don't just accumulate indefinitely.
+func (db *DB) DeleteEventCursors(ctx context.Context, userID string) error {
+	_, err := db.sql.ExecContext(ctx, `DELETE FROM event_cursors WHERE user_id = ?`, userID)
+	return err
+}
+
 // GetReliability reports "sse-only" if userID has any event-cursor row currently marked
 // degraded, "full" otherwise (including when userID has no cursor rows at all — nothing
 // has been found unreliable yet).

@@ -232,7 +232,17 @@ func (m *Manager) consumeForUser(ctx context.Context, userID string, id uint64) 
 
 	onConnected := func() {
 		if m.reconciler != nil {
-			go m.reconciler.Reconcile(ctx, userID, authHeader)
+			// This is a fire-and-forget background pass — a panic anywhere inside
+			// Reconcile (or anything it calls) must not crash the whole process just
+			// because one reconciliation attempt for one user went wrong.
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						m.log.Error("sse manager: reconciliation panicked", "userID", userID, "panic", r)
+					}
+				}()
+				m.reconciler.Reconcile(ctx, userID, authHeader)
+			}()
 		}
 	}
 
