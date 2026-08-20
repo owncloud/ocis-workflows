@@ -135,8 +135,9 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Fatal("condition not met within timeout")
 }
 
-// itemID "opaque-1" resolves to a compound resource id via fakePathResolver keyed on the
-// opaque id portion — see splitResourceID's expected input shape ("storageid$spaceid!opaqueid").
+// oCIS's Graph API requires the full compound resourceID as the itemID path segment (a bare
+// opaque suffix 404s: itemNotFound) — so fakePathResolver below is keyed on the whole
+// testResourceID, matching what splitResourceID now returns as itemID.
 const testResourceID = "storage1$drive-1!opaque-1"
 
 func TestReconcileFirstEverCallSeedsCursorWithoutBackfill(t *testing.T) {
@@ -148,7 +149,7 @@ func TestReconcileFirstEverCallSeedsCursorWithoutBackfill(t *testing.T) {
 	})
 	exec := &fakeExecutor{}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
-	paths := &fakePathResolver{pathsByItemID: map[string]string{"opaque-1": "/Invoices/foo.pdf"}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
 	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
@@ -179,7 +180,7 @@ func TestReconcileDispatchesMatchingActivity(t *testing.T) {
 	})
 	exec := &fakeExecutor{}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
-	paths := &fakePathResolver{pathsByItemID: map[string]string{"opaque-1": "/Invoices/foo.pdf"}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
 	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
@@ -210,7 +211,7 @@ func TestReconcileSkipsUnmappedMessage(t *testing.T) {
 	})
 	exec := &fakeExecutor{}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
-	paths := &fakePathResolver{pathsByItemID: map[string]string{"opaque-1": "/Invoices/foo.pdf"}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/Invoices/foo.pdf"}}
 
 	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
@@ -233,7 +234,7 @@ func TestReconcileSkipsInternalBookkeepingPath(t *testing.T) {
 	})
 	exec := &fakeExecutor{}
 	store := &fakeWorkflowStore{workflows: map[string]model.WorkflowDefinition{"wf-1": {ID: "wf-1", Enabled: true}}}
-	paths := &fakePathResolver{pathsByItemID: map[string]string{"opaque-1": "/.workflows/executions/wf-1/exec-1.json"}}
+	paths := &fakePathResolver{pathsByItemID: map[string]string{testResourceID: "/.workflows/executions/wf-1/exec-1.json"}}
 
 	r := New(triggers, &fakeDriveLister{}, activities, paths, exec, store, 5*time.Second, 5*time.Second, 10, discardLogger())
 	r.Reconcile(t.Context(), "user-1", "Basic dGVzdA==")
@@ -395,8 +396,9 @@ func (b *blockingActivityLister) ListActivities(context.Context, string, string,
 }
 
 // splitResourceID isn't exported — this test exercises it indirectly via Reconcile above
-// (fakePathResolver keys on the opaque-id portion it extracts), but a direct unit test
-// pins the parsing itself.
+// (fakePathResolver keys on the full compound id it returns as itemID, since oCIS's Graph
+// API requires the full compound resourceID as the itemID path segment), but a direct unit
+// test pins the parsing itself.
 func TestSplitResourceID(t *testing.T) {
 	cases := []struct {
 		in        string
@@ -404,7 +406,7 @@ func TestSplitResourceID(t *testing.T) {
 		wantItem  string
 		wantOK    bool
 	}{
-		{"storage1$drive-1!opaque-1", "storage1$drive-1", "opaque-1", true},
+		{"storage1$drive-1!opaque-1", "storage1$drive-1", "storage1$drive-1!opaque-1", true},
 		{"", "", "", false},
 		{"no-bang-here", "", "", false},
 	}

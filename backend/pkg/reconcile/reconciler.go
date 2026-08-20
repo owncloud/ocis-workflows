@@ -265,15 +265,18 @@ func (r *Reconciler) runWorkflow(ctx context.Context, authHeader, workflowID, re
 }
 
 // splitResourceID splits activitylog's compound "storageid$spaceid!opaqueid" resource id
-// into (spaceID, itemID), where spaceID is everything before the last "!" and itemID is
-// everything after it. spaceID is returned for completeness/validation but callers should
-// prefer an already-known driveID over it when one is available (see dispatch) — it carries
-// a storage-provider prefix that doesn't match the plain drive id used elsewhere
+// into (spaceID, itemID). spaceID is everything before the last "!"; itemID is the *whole*
+// original id, unchanged — oCIS's Graph API requires the full compound resourceID as the
+// itemID path segment (verified live: /graph/v1.0/drives/{spaceID}/items/{opaqueOnly} 404s
+// with itemNotFound, while .../items/{fullCompoundID} resolves), it does not accept the bare
+// opaque suffix. spaceID is returned for completeness/validation but callers should prefer
+// an already-known driveID over it when one is available (see dispatch) — it carries a
+// storage-provider prefix that doesn't match the plain drive id used elsewhere
 // (TriggerIndexEntry.SpaceID, the driveID ListActivities was queried with).
 func splitResourceID(id string) (spaceID, itemID string, ok bool) {
 	idx := strings.LastIndex(id, "!")
 	if idx < 0 {
 		return "", "", false
 	}
-	return id[:idx], id[idx+1:], true
+	return id[:idx], id, true
 }
