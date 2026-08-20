@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registers as "sqlite"
@@ -39,6 +40,23 @@ type TriggerIndexEntry struct {
 	PathPrefix  string // event trigger filter, mirrors model.EventFilters
 	Extension   string // event trigger filter, mirrors model.EventFilters
 	SpaceID     string // event trigger filter, mirrors model.EventFilters
+}
+
+// MatchesFilters reports whether e's path-prefix, extension, and space filters (any of
+// which may be unset, meaning "no restriction") admit an event at the given resolved
+// WebDAV path and originating space id. Does not check UserID or EventType — callers
+// filter on those first, since it's cheaper than resolving a path.
+func (e TriggerIndexEntry) MatchesFilters(path, spaceID string) bool {
+	if e.PathPrefix != "" && !strings.HasPrefix(path, e.PathPrefix) {
+		return false
+	}
+	if e.Extension != "" && !strings.HasSuffix(path, e.Extension) {
+		return false
+	}
+	if e.SpaceID != "" && e.SpaceID != spaceID {
+		return false
+	}
+	return true
 }
 
 // DB is the sidecar's local SQLite-backed store.

@@ -133,6 +133,33 @@ func TestTriggerIndex(t *testing.T) {
 	}
 }
 
+func TestTriggerIndexEntryMatchesFilters(t *testing.T) {
+	cases := []struct {
+		name    string
+		entry   TriggerIndexEntry
+		path    string
+		spaceID string
+		want    bool
+	}{
+		{"no filters matches anything", TriggerIndexEntry{}, "/any/path.txt", "space-1", true},
+		{"path prefix matches", TriggerIndexEntry{PathPrefix: "/Invoices"}, "/Invoices/foo.pdf", "space-1", true},
+		{"path prefix rejects", TriggerIndexEntry{PathPrefix: "/Invoices"}, "/Photos/foo.jpg", "space-1", false},
+		{"extension matches", TriggerIndexEntry{Extension: ".pdf"}, "/foo.pdf", "space-1", true},
+		{"extension rejects", TriggerIndexEntry{Extension: ".pdf"}, "/foo.jpg", "space-1", false},
+		{"space id matches", TriggerIndexEntry{SpaceID: "space-1"}, "/foo.pdf", "space-1", true},
+		{"space id rejects", TriggerIndexEntry{SpaceID: "space-1"}, "/foo.pdf", "space-2", false},
+		{"all filters combined, all pass", TriggerIndexEntry{PathPrefix: "/Invoices", Extension: ".pdf", SpaceID: "space-1"}, "/Invoices/foo.pdf", "space-1", true},
+		{"all filters combined, one fails", TriggerIndexEntry{PathPrefix: "/Invoices", Extension: ".pdf", SpaceID: "space-1"}, "/Invoices/foo.pdf", "space-2", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.entry.MatchesFilters(c.path, c.spaceID); got != c.want {
+				t.Errorf("MatchesFilters(%q, %q) = %v, want %v", c.path, c.spaceID, got, c.want)
+			}
+		})
+	}
+}
+
 // TestMigrateAddsColumnsToExistingTable regression-tests a real bug: CREATE TABLE IF NOT
 // EXISTS is a no-op against a trigger_index table that already exists from before
 // path_prefix/extension were added, so opening an existing (pre-M4) database used to fail
