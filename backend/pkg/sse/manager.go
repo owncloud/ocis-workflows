@@ -62,17 +62,25 @@ type Executor interface {
 	Run(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord
 }
 
+// Reconciler runs an activitylog-based backstop pass for a user, catching up on anything
+// their SSE connection may have missed while it was down. Satisfied by
+// *reconcile.Reconciler.
+type Reconciler interface {
+	Reconcile(ctx context.Context, userID, authHeader string)
+}
+
 // Manager keeps one SSE consumer goroutine running per user with an active event trigger,
 // reconciling against the trigger index on a fixed interval.
 type Manager struct {
-	db       TriggerStore
-	store    WorkflowStore
-	paths    PathResolver
-	executor Executor
-	ocisURL  string
-	insecure bool
-	interval time.Duration
-	log      *slog.Logger
+	db         TriggerStore
+	store      WorkflowStore
+	paths      PathResolver
+	executor   Executor
+	reconciler Reconciler
+	ocisURL    string
+	insecure   bool
+	interval   time.Duration
+	log        *slog.Logger
 
 	httpClient *http.Client
 
@@ -94,7 +102,7 @@ type activeConsumer struct {
 }
 
 // New builds a Manager.
-func New(db TriggerStore, store WorkflowStore, paths PathResolver, executor Executor, ocisURL string, insecure bool, interval time.Duration, log *slog.Logger) *Manager {
+func New(db TriggerStore, store WorkflowStore, paths PathResolver, executor Executor, reconciler Reconciler, ocisURL string, insecure bool, interval time.Duration, log *slog.Logger) *Manager {
 	transport := &http.Transport{}
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // dev-only opt-in
@@ -104,6 +112,7 @@ func New(db TriggerStore, store WorkflowStore, paths PathResolver, executor Exec
 		store:      store,
 		paths:      paths,
 		executor:   executor,
+		reconciler: reconciler,
 		ocisURL:    strings.TrimRight(ocisURL, "/"),
 		insecure:   insecure,
 		interval:   interval,
@@ -221,6 +230,22 @@ func (m *Manager) consumeForUser(ctx context.Context, userID string, id uint64) 
 	}
 	authHeader := "Basic " + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", automation.Username, automation.AppPassword))
 
+	onConnected := func() {
+		if m.reconciler != nil {
+			// This is a fire-and-forget background pass — a panic anywhere inside
+			// Reconcile (or anything it calls) must not crash the whole process just
+			// because one reconciliation attempt for one user went wrong.
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						m.log.Error("sse manager: reconciliation panicked", "userID", userID, "panic", r)
+					}
+				}()
+				m.reconciler.Reconcile(ctx, userID, authHeader)
+			}()
+		}
+	}
+
 	backoff := time.Second
 	for {
 		select {
@@ -229,7 +254,7 @@ func (m *Manager) consumeForUser(ctx context.Context, userID string, id uint64) 
 		default:
 		}
 
-		if err := m.streamOnce(ctx, userID, authHeader); err != nil && ctx.Err() == nil {
+		if err := m.streamOnce(ctx, userID, authHeader, onConnected); err != nil && ctx.Err() == nil {
 			m.log.Warn("sse manager: stream ended, reconnecting", "userID", userID, "error", err, "backoff", backoff)
 		}
 		if ctx.Err() != nil {
@@ -247,7 +272,7 @@ func (m *Manager) consumeForUser(ctx context.Context, userID string, id uint64) 
 	}
 }
 
-func (m *Manager) streamOnce(ctx context.Context, userID, authHeader string) error {
+func (m *Manager) streamOnce(ctx context.Context, userID, authHeader string, onConnected func()) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		m.ocisURL+"/ocs/v2.php/apps/notifications/api/v1/notifications/sse", nil)
 	if err != nil {
@@ -264,6 +289,10 @@ func (m *Manager) streamOnce(ctx context.Context, userID, authHeader string) err
 
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("sse endpoint returned status %d", res.StatusCode)
+	}
+
+	if onConnected != nil {
+		onConnected()
 	}
 
 	// Proper SSE block parsing: a live oCIS instance was observed emitting "data:" *before*
@@ -336,13 +365,7 @@ func (m *Manager) handleEvent(ctx context.Context, userID, authHeader, sseEventT
 			continue
 		}
 
-		if e.PathPrefix != "" && !strings.HasPrefix(resolvedPath, e.PathPrefix) {
-			continue
-		}
-		if e.Extension != "" && !strings.HasSuffix(resolvedPath, e.Extension) {
-			continue
-		}
-		if e.SpaceID != "" && e.SpaceID != payload.SpaceID {
+		if !e.MatchesFilters(resolvedPath, payload.SpaceID) {
 			continue
 		}
 

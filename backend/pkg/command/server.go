@@ -19,6 +19,7 @@ import (
 	"github.com/owncloud/ocis-workflows/pkg/localdb"
 	"github.com/owncloud/ocis-workflows/pkg/logging"
 	"github.com/owncloud/ocis-workflows/pkg/ocisclient"
+	"github.com/owncloud/ocis-workflows/pkg/reconcile"
 	"github.com/owncloud/ocis-workflows/pkg/scheduler"
 	debugserver "github.com/owncloud/ocis-workflows/pkg/server/debug"
 	httpserver "github.com/owncloud/ocis-workflows/pkg/server/http"
@@ -39,6 +40,26 @@ const sseReconcileInterval = 30 * time.Second
 // nearing expiry. Daily is frequent enough given the 14-day renewal window and 90-day
 // credential lifetime.
 const renewalTickInterval = 24 * time.Hour
+
+// reconcileGracePeriod is both the minimum cursor age before a reconciliation pass runs
+// and the debounce window for flapping SSE reconnects.
+const reconcileGracePeriod = 5 * time.Second
+
+// reconcileOverlapWindow is subtracted from a stored cursor before querying activitylog,
+// trading a rare double-fire for never missing a boundary event.
+const reconcileOverlapWindow = 5 * time.Second
+
+// reconcileFirstConnectLookback is how far back a (user, drive) pair with no prior cursor
+// looks on its very first reconciliation pass — generous relative to realistic SSE
+// reconnect delays (covering a brand-new trigger racing the first SSE connection), but far
+// short of activitylog's retention (so it doesn't flood-dispatch a busy drive's history the
+// first time it's ever checked).
+const reconcileFirstConnectLookback = 5 * time.Minute
+
+// reconcileMaxConcurrent bounds how many reconciliation passes run at once instance-wide,
+// so a fleet-wide SSE reconnect (e.g. oCIS's own sse service restarting) can't fire
+// unbounded simultaneous activitylog queries.
+const reconcileMaxConcurrent = 10
 
 // RunServer starts the public API server, the debug server, and the background schedule
 // evaluator, and blocks until any of them exits or the process receives an interrupt/
@@ -66,11 +87,14 @@ func RunServer(cfg config.Config) error {
 	}
 	defer db.Close()
 
+	reconciler := reconcile.New(db, ocisClient, ocisClient, ocisClient, graphExecutor, store,
+		reconcileGracePeriod, reconcileOverlapWindow, reconcileFirstConnectLookback, reconcileMaxConcurrent, log)
+
 	// sseManager is constructed before the handlers below so its Kick method can be wired
 	// into them: both a workflow's event trigger being added and a user's automation being
 	// connected should nudge the SSE manager to reconcile immediately instead of waiting for
 	// its next periodic tick (up to sseReconcileInterval later).
-	sseManager := sse.New(db, store, ocisClient, graphExecutor, cfg.OCISURL, cfg.OCISInsecure, sseReconcileInterval, log)
+	sseManager := sse.New(db, store, ocisClient, graphExecutor, reconciler, cfg.OCISURL, cfg.OCISInsecure, sseReconcileInterval, log)
 
 	automationService := automation.New(ocisClient, db, sseManager, log)
 

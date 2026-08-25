@@ -68,7 +68,17 @@ func (s *Service) Status(ctx context.Context, userID string) (*model.AutomationS
 		}
 		return nil, err
 	}
-	return toStatus(a), nil
+
+	status := toStatus(a)
+	if status.Connected {
+		reliability, err := s.db.GetReliability(ctx, userID)
+		if err != nil {
+			s.log.Warn("read event-trigger reliability", "userID", userID, "error", err)
+		} else {
+			status.Reliability = reliability
+		}
+	}
+	return status, nil
 }
 
 // Connect mints a fresh app-password for the caller (identified by authHeader) and stores
@@ -134,6 +144,14 @@ func (s *Service) Disconnect(ctx context.Context, authHeader string) error {
 	if err := s.db.DeleteAutomation(ctx, userID); err != nil {
 		return fmt.Errorf("delete stored automation credential: %w", err)
 	}
+
+	// Also forget any reconciliation cursors — otherwise a drive that was marked "sse-only"
+	// keeps reporting degraded reliability forever with no way to clear it, and rows for a
+	// disconnected user just accumulate indefinitely.
+	if err := s.db.DeleteEventCursors(ctx, userID); err != nil {
+		return fmt.Errorf("delete stored event cursors: %w", err)
+	}
+
 	s.log.Info("automation disconnected", "userID", userID)
 	return nil
 }
