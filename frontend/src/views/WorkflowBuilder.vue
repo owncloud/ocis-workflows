@@ -95,6 +95,7 @@
       :node="selectedNode"
       :nodes="nodes"
       :edges="edges"
+      :spaces="spaces"
       @update="(data) => updateNodeData(selectedNode!.id, data)"
       @close="selectedNodeId = null"
     />
@@ -134,7 +135,7 @@ import { useAutomationConnect } from '../composables/useAutomationConnect'
 import { builderPath, listPath } from '../router'
 import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY } from '../nodeTypes'
 import { computeNewNodePosition } from '../utils/nodeLayout'
-import type { TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
+import type { Space, TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
 const props = defineProps<{ id: string }>()
 
@@ -159,6 +160,7 @@ const edges = ref<WorkflowEdge[]>([])
 const loadError = ref('')
 const saveError = ref('')
 const saving = ref(false)
+const spaces = ref<Space[]>([])
 
 const pickerOpen = ref(false)
 const pickerConnectFrom = ref<string | null>(null)
@@ -185,6 +187,17 @@ const load = async () => {
     fitViewSoon()
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+// Space scoping is an optional, decorative filter on event triggers — if the list can't be
+// loaded, the picker just falls back to "Any space" rather than blocking the rest of the
+// builder.
+const loadSpaces = async () => {
+  try {
+    spaces.value = await api.listSpaces()
+  } catch {
+    // intentionally silent — see comment above
   }
 }
 
@@ -301,7 +314,10 @@ const save = async () => {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadSpaces()
+})
 </script>
 
 <style scoped>

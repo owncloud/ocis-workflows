@@ -38,6 +38,7 @@ type TriggerIndexEntry struct {
 	EventType   string
 	PathPrefix  string // event trigger filter, mirrors model.EventFilters
 	Extension   string // event trigger filter, mirrors model.EventFilters
+	SpaceID     string // event trigger filter, mirrors model.EventFilters
 }
 
 // DB is the sidecar's local SQLite-backed store.
@@ -93,8 +94,8 @@ func (db *DB) migrate() error {
 	}
 
 	// CREATE TABLE IF NOT EXISTS only handles brand-new databases — a trigger_index table
-	// created before path_prefix/extension existed needs these added explicitly.
-	for _, col := range []string{"path_prefix", "extension"} {
+	// created before path_prefix/extension/space_id existed needs these added explicitly.
+	for _, col := range []string{"path_prefix", "extension", "space_id"} {
 		if err := db.addColumnIfMissing("trigger_index", col, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -213,16 +214,17 @@ func (db *DB) ListAutomations(ctx context.Context) ([]Automation, error) {
 // whenever a workflow with a schedule/event trigger is created or updated.
 func (db *DB) UpsertTriggerIndexEntry(ctx context.Context, e TriggerIndexEntry) error {
 	_, err := db.sql.ExecContext(ctx, `
-		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO trigger_index (workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension, space_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workflow_id) DO UPDATE SET
 			user_id = excluded.user_id,
 			trigger_type = excluded.trigger_type,
 			schedule = excluded.schedule,
 			event_type = excluded.event_type,
 			path_prefix = excluded.path_prefix,
-			extension = excluded.extension
-	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType, e.PathPrefix, e.Extension)
+			extension = excluded.extension,
+			space_id = excluded.space_id
+	`, e.WorkflowID, e.UserID, e.TriggerType, e.Schedule, e.EventType, e.PathPrefix, e.Extension, e.SpaceID)
 	return err
 }
 
@@ -245,7 +247,7 @@ func (db *DB) ListEventTriggers(ctx context.Context) ([]TriggerIndexEntry, error
 
 func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIndexEntry, error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension
+		SELECT workflow_id, user_id, trigger_type, schedule, event_type, path_prefix, extension, space_id
 		FROM trigger_index WHERE trigger_type = ?
 	`, triggerType)
 	if err != nil {
@@ -256,7 +258,7 @@ func (db *DB) listTriggers(ctx context.Context, triggerType string) ([]TriggerIn
 	var out []TriggerIndexEntry
 	for rows.Next() {
 		var e TriggerIndexEntry
-		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension); err != nil {
+		if err := rows.Scan(&e.WorkflowID, &e.UserID, &e.TriggerType, &e.Schedule, &e.EventType, &e.PathPrefix, &e.Extension, &e.SpaceID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

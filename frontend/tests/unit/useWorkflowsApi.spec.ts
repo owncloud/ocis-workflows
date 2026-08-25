@@ -30,6 +30,25 @@ describe('useWorkflowsApi', () => {
     )
   })
 
+  it('unwraps the Graph-style collection envelope when listing spaces', async () => {
+    ;(fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ value: [{ id: 'space-1', name: 'Admin' }] })
+    })
+
+    const api = useWorkflowsApi('https://example.test/api/v1beta1')
+    const result = await api.listSpaces()
+
+    expect(result).toEqual([{ id: 'space-1', name: 'Admin' }])
+    expect(fetch).toHaveBeenCalledWith(
+      'https://example.test/api/v1beta1/me/spaces',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer test-token' })
+      })
+    )
+  })
+
   it('PATCHes for updates, not PUT', async () => {
     ;(fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,

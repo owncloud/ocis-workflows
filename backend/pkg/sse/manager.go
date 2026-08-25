@@ -342,6 +342,9 @@ func (m *Manager) handleEvent(ctx context.Context, userID, authHeader, sseEventT
 		if e.Extension != "" && !strings.HasSuffix(resolvedPath, e.Extension) {
 			continue
 		}
+		if e.SpaceID != "" && e.SpaceID != payload.SpaceID {
+			continue
+		}
 
 		go m.runWorkflow(ctx, authHeader, e.WorkflowID, resolvedPath)
 	}

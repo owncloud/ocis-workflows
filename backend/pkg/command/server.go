@@ -76,12 +76,14 @@ func RunServer(cfg config.Config) error {
 
 	workflowsHandler := service.NewWorkflowsHandler(store, graphExecutor, ocisClient, db, sseManager, log)
 	automationHandler := service.NewAutomationHandler(automationService, ocisClient)
+	spacesHandler := service.NewSpacesHandler(ocisClient)
 
 	apiHandler := httpserver.New(httpserver.Options{
 		AllowedOrigin: cfg.AllowedOrigin,
 		Validator:     validator,
 		Workflows:     workflowsHandler,
 		Automation:    automationHandler,
+		Spaces:        spacesHandler,
 		Logger:        log,
 	})
 

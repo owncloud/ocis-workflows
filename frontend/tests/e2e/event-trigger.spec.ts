@@ -15,9 +15,17 @@ test('build a workflow with a file event trigger and persist its filters', async
   await expect(page.locator('.workflows-node-trigger')).toBeVisible()
 
   // Adding the node opens its Node Details panel automatically; configure the event
-  // type + path filter directly, no extra click needed to open it.
+  // type + path filter + space directly, no extra click needed to open it.
   await page.getByLabel('Event').selectOption('move')
   await page.getByLabel('Only for files under path (optional)').fill('/Invoices')
+
+  // Exactly 2 options in this dev stack: "Any space" plus the admin account's one real
+  // (non-virtual) space — assert the count rather than hardcoding the space's display name.
+  const spaceSelect = page.getByLabel('Space (optional)')
+  await expect(spaceSelect.locator('option')).toHaveCount(2)
+  const spaceValue = await spaceSelect.locator('option').nth(1).getAttribute('value')
+  await spaceSelect.selectOption({ index: 1 })
+
   await page.getByRole('button', { name: 'Close' }).click()
 
   await page.locator('.workflows-node-trigger .workflows-node-add-button').click()
@@ -44,6 +52,7 @@ test('build a workflow with a file event trigger and persist its filters', async
   await expect(page.getByLabel('Trigger type')).toHaveValue('event')
   await expect(page.getByLabel('Event')).toHaveValue('move')
   await expect(page.getByLabel('Only for files under path (optional)')).toHaveValue('/Invoices')
+  await expect(page.getByLabel('Space (optional)')).toHaveValue(spaceValue!)
   await page.getByRole('button', { name: 'Close' }).click()
 
   await page.goto('/workflows/workflows')
