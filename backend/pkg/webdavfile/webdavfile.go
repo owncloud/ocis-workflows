@@ -112,6 +112,35 @@ func (c *Client) copyOrMove(ctx context.Context, method, authHeader, davPath, de
 	}
 }
 
+// Delete issues a WebDAV DELETE against davPath. On oCIS this typically moves the resource
+// to the space's trash rather than hard-deleting it — platform behavior, not something this
+// method implements or relies on.
+func (c *Client) Delete(ctx context.Context, authHeader, davPath string) error {
+	userID, err := c.ocisClient.Me(ctx, authHeader)
+	if err != nil {
+		return fmt.Errorf("resolve current user: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.davURL(userID, davPath), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", authHeader)
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	switch res.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	default:
+		return fmt.Errorf("DELETE %s returned status %d", davPath, res.StatusCode)
+	}
+}
+
 // Comment appends a comment to a file. oCIS has no native file-comments API (unlike tags),
 // so this is implemented as a JSON sidecar list stored alongside our own workflow data
 // under .workflows/comments/ in the caller's space — real and retrievable, but not

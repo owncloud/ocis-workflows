@@ -50,4 +50,24 @@ describe('nodeTypes', () => {
     expect(found).toBeDefined()
     expect(found?.nodeKind).toBe('extractText')
   })
+
+  it('registers a no-config "Delete File" action node', () => {
+    const deleteType = findNodeType('action-delete')
+
+    expect(deleteType).toBeDefined()
+    expect(deleteType?.nodeKind).toBe('action')
+    expect(deleteType?.actionType).toBe('delete')
+    expect(deleteType?.category).toBe(ACTION_CATEGORY)
+    expect(deleteType?.defaultData).toEqual({ actionType: 'delete' })
+  })
+
+  it('is discoverable via findNodeTypeForNode using the actionType discriminator', () => {
+    const found = findNodeTypeForNode('action', 'delete')
+    expect(found?.id).toBe('action-delete')
+  })
+
+  it('is listed only once among the action category entries', () => {
+    const deleteEntries = NODE_TYPES.filter((t) => t.actionType === 'delete')
+    expect(deleteEntries).toHaveLength(1)
+  })
 })
