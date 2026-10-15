@@ -50,4 +50,24 @@ describe('nodeTypes', () => {
     expect(found).toBeDefined()
     expect(found?.nodeKind).toBe('extractText')
   })
+
+  it('defines a createFolder action node under the Actions category', () => {
+    const nodeType = findNodeType('action-create-folder')
+
+    expect(nodeType).toBeDefined()
+    expect(nodeType?.nodeKind).toBe('action')
+    expect(nodeType?.actionType).toBe('createFolder')
+    expect(nodeType?.category).toBe(ACTION_CATEGORY)
+    expect(nodeType?.defaultData).toEqual({ actionType: 'createFolder' })
+  })
+
+  it('resolves the createFolder node type for an existing canvas node', () => {
+    const nodeType = findNodeTypeForNode('action', 'createFolder')
+    expect(nodeType?.id).toBe('action-create-folder')
+  })
+
+  it('keeps NODE_TYPES action ids unique', () => {
+    const actionIds = NODE_TYPES.filter((t) => t.nodeKind === 'action').map((t) => t.id)
+    expect(new Set(actionIds).size).toBe(actionIds.length)
+  })
 })
