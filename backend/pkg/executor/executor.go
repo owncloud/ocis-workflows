@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -54,6 +55,13 @@ func New(llmClient LLMClient, files FileClient, graph GraphClient, log *slog.Log
 // call (WebDAV/Graph) and the executor's own configured LLM endpoint for every llm node.
 // resourcePath is the WebDAV path of the file this run operates on — optional for graphs
 // that don't reference {{file.*}} or perform file actions.
+//
+// Traversal follows every outgoing edge unconditionally for every node kind except
+// "condition", which has exactly two outputs ("true"/"false"): only the edge whose
+// SourceHandle matches the evaluated comparison is followed (see runCondition and
+// targetsFor). Node/edge "condition" *fields* (WorkflowNodeData.Condition,
+// EdgeData.Condition) remain a separate, unrelated, still-unimplemented free-form
+// per-node/per-edge gate — unaffected by this.
 func (e *Executor) Run(ctx context.Context, authHeader string, wf model.WorkflowDefinition, triggeredBy, resourcePath string) *model.ExecutionRecord {
 	record := &model.ExecutionRecord{
 		ID:              uuid.NewString(),
@@ -76,34 +84,70 @@ func (e *Executor) Run(ctx context.Context, authHeader string, wf model.Workflow
 		}
 	}
 
+	byID, outgoing, start := indexGraph(wf.Graph)
+
 	failed := false
-	for _, node := range e.orderedNodes(wf.Graph) {
-		if node.Type == "trigger" {
-			continue
-		}
+	if start != "" {
+		visited := map[string]bool{}
+		queue := []string{start}
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
 
-		result := model.NodeResult{NodeID: node.ID, Status: "succeeded"}
-		var err error
+			node, ok := byID[id]
+			if !ok {
+				continue
+			}
 
-		switch node.Type {
-		case "llm":
-			err = e.runLLM(ctx, node, vars, &result)
-		case "extractText":
-			err = e.runExtractText(node, vars, &result)
-		case "action":
-			currentPath, err = e.runAction(ctx, authHeader, node, vars, currentPath, &result)
-		default:
-			err = fmt.Errorf("unknown node type %q", node.Type)
-		}
+			if node.Type == "trigger" {
+				queue = append(queue, targetsFor(outgoing[id], nil)...)
+				continue
+			}
 
-		if err != nil {
-			result.Status = "failed"
-			result.Error = &model.ErrorDetail{Code: "nodeFailed", Message: err.Error()}
+			result := model.NodeResult{NodeID: node.ID, Status: "succeeded"}
+			var err error
+			// matchedHandle is nil for every node kind except "condition": nil means
+			// "follow every outgoing edge" (today's behavior, unchanged for
+			// trigger/llm/action nodes, all of which only ever have one output anyway).
+			// For a condition node it's set to the evaluated branch ("true"/"false"),
+			// so only the edge(s) whose SourceHandle matches get followed.
+			var matchedHandle *string
+
+			switch node.Type {
+			case "llm":
+				err = e.runLLM(ctx, node, vars, &result)
+			case "extractText":
+				err = e.runExtractText(node, vars, &result)
+			case "action":
+				currentPath, err = e.runAction(ctx, authHeader, node, vars, currentPath, &result)
+			case "condition":
+				var outcome bool
+				outcome, err = e.runCondition(node, vars, &result)
+				if err == nil {
+					handle := "false"
+					if outcome {
+						handle = "true"
+					}
+					matchedHandle = &handle
+				}
+			default:
+				err = fmt.Errorf("unknown node type %q", node.Type)
+			}
+
+			if err != nil {
+				result.Status = "failed"
+				result.Error = &model.ErrorDetail{Code: "nodeFailed", Message: err.Error()}
+				record.NodeResults = append(record.NodeResults, result)
+				failed = true
+				break
+			}
 			record.NodeResults = append(record.NodeResults, result)
-			failed = true
-			break
+			queue = append(queue, targetsFor(outgoing[id], matchedHandle)...)
 		}
-		record.NodeResults = append(record.NodeResults, result)
 	}
 
 	if failed {
@@ -116,47 +160,44 @@ func (e *Executor) Run(ctx context.Context, authHeader string, wf model.Workflow
 	return record
 }
 
-// orderedNodes walks the graph from its trigger node following edges, so nodes execute in
-// the order the user chained them. Node/edge "condition" fields are stored but not yet
-// evaluated — every reachable node always runs. Deferred, not forgotten.
-func (e *Executor) orderedNodes(graph model.WorkflowGraph) []model.WorkflowNode {
-	byID := make(map[string]model.WorkflowNode, len(graph.Nodes))
+// indexGraph builds lookup structures for traversal: nodes by id, outgoing edges by
+// source node id, and the id of the trigger node execution starts from (empty if none).
+func indexGraph(graph model.WorkflowGraph) (byID map[string]model.WorkflowNode, outgoing map[string][]model.WorkflowEdge, start string) {
+	byID = make(map[string]model.WorkflowNode, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		byID[n.ID] = n
 	}
 
-	outgoing := make(map[string][]string)
+	outgoing = make(map[string][]model.WorkflowEdge)
 	for _, edge := range graph.Edges {
-		outgoing[edge.Source] = append(outgoing[edge.Source], edge.Target)
+		outgoing[edge.Source] = append(outgoing[edge.Source], edge)
 	}
 
-	var start string
 	for _, n := range graph.Nodes {
 		if n.Type == "trigger" {
 			start = n.ID
 			break
 		}
 	}
-	if start == "" {
-		return nil
-	}
+	return byID, outgoing, start
+}
 
-	var ordered []model.WorkflowNode
-	visited := map[string]bool{}
-	queue := []string{start}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if visited[id] {
+// targetsFor resolves which of a node's outgoing edges to follow next. handle == nil
+// means "every node kind except condition": follow every outgoing edge, same as before
+// branching existed. A non-nil handle (only ever set for a condition node's evaluated
+// "true"/"false" result) restricts traversal to edges whose SourceHandle matches; if the
+// evaluated branch has no wired edge, this simply returns nothing — a clean dead end for
+// that branch, not an error, since a condition node with only one branch connected (e.g.
+// "if spam, delete; otherwise do nothing") is a perfectly valid workflow shape.
+func targetsFor(edges []model.WorkflowEdge, handle *string) []string {
+	var targets []string
+	for _, edge := range edges {
+		if handle != nil && edge.SourceHandle != *handle {
 			continue
 		}
-		visited[id] = true
-		if n, ok := byID[id]; ok {
-			ordered = append(ordered, n)
-		}
-		queue = append(queue, outgoing[id]...)
+		targets = append(targets, edge.Target)
 	}
-	return ordered
+	return targets
 }
 
 func (e *Executor) runLLM(ctx context.Context, node model.WorkflowNode, vars map[string]string, result *model.NodeResult) error {
@@ -198,6 +239,48 @@ func (e *Executor) runExtractText(node model.WorkflowNode, vars map[string]strin
 	vars[outputVar] = text
 	result.Output = fmt.Sprintf("%d characters extracted", len(text))
 	return nil
+}
+
+// runCondition renders a condition node's left/right templates against vars (exactly
+// like every action param already is) and evaluates the comparison. It returns the
+// boolean outcome, which the caller uses to pick the matching "true"/"false" outgoing
+// edge; it never itself decides traversal. result.Output is set to "true"/"false" for
+// visibility in the execution log — no new vars entries are added.
+func (e *Executor) runCondition(node model.WorkflowNode, vars map[string]string, result *model.NodeResult) (bool, error) {
+	rawLeft, _ := node.Data["left"].(string)
+	left := render(rawLeft, vars)
+
+	rawRight, _ := node.Data["right"].(string)
+	right := render(rawRight, vars)
+
+	operator, _ := node.Data["operator"].(string)
+
+	var outcome bool
+	switch operator {
+	case "equals":
+		outcome = left == right
+	case "notEquals":
+		outcome = left != right
+	case "contains":
+		outcome = strings.Contains(left, right)
+	case "notContains":
+		outcome = !strings.Contains(left, right)
+	case "matches":
+		matched, err := regexp.MatchString(right, left)
+		if err != nil {
+			return false, fmt.Errorf("condition node has an invalid regex pattern %q: %w", right, err)
+		}
+		outcome = matched
+	default:
+		return false, fmt.Errorf("unknown condition operator %q", operator)
+	}
+
+	if outcome {
+		result.Output = "true"
+	} else {
+		result.Output = "false"
+	}
+	return outcome, nil
 }
 
 func (e *Executor) runAction(ctx context.Context, authHeader string, node model.WorkflowNode, vars map[string]string, currentPath string, result *model.NodeResult) (string, error) {

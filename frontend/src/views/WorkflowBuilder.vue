@@ -70,6 +70,13 @@
             @add-next="openPicker(nodeProps.id)"
           />
         </template>
+        <template #node-condition="nodeProps">
+          <ConditionNode
+            v-bind="nodeProps"
+            @configure="selectedNodeId = nodeProps.id"
+            @add-next="(handle) => openPicker(nodeProps.id, undefined, handle)"
+          />
+        </template>
       </VueFlow>
 
       <div v-if="!nodes.length" class="workflows-empty-state">
@@ -126,6 +133,7 @@ import TriggerNode from '../components/nodes/TriggerNode.vue'
 import LlmNode from '../components/nodes/LlmNode.vue'
 import ActionNode from '../components/nodes/ActionNode.vue'
 import ExtractTextNode from '../components/nodes/ExtractTextNode.vue'
+import ConditionNode from '../components/nodes/ConditionNode.vue'
 import NodePicker from '../components/NodePicker.vue'
 import NodeDetailsPanel from '../components/NodeDetailsPanel.vue'
 import ExecutionsPanel from '../components/ExecutionsPanel.vue'
@@ -133,7 +141,14 @@ import { useWorkflowsApi } from '../composables/useWorkflowsApi'
 import { useAppConfig } from '../composables/useAppConfig'
 import { useAutomationConnect } from '../composables/useAutomationConnect'
 import { builderPath, listPath } from '../router'
-import { findNodeType, TRIGGER_CATEGORY, AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY } from '../nodeTypes'
+import {
+  findNodeType,
+  TRIGGER_CATEGORY,
+  AI_CATEGORY,
+  LOGIC_CATEGORY,
+  ACTION_CATEGORY,
+  NOTIFICATION_CATEGORY
+} from '../nodeTypes'
 import { computeNewNodePosition } from '../utils/nodeLayout'
 import type { Space, TriggerType, WorkflowEdge, WorkflowNode, WorkflowNodeData } from '../types/workflow'
 
@@ -164,6 +179,7 @@ const spaces = ref<Space[]>([])
 
 const pickerOpen = ref(false)
 const pickerConnectFrom = ref<string | null>(null)
+const pickerConnectFromHandle = ref<string | undefined>(undefined)
 const pickerAllowedCategories = ref<string[] | undefined>(undefined)
 const selectedNodeId = ref<string | null>(null)
 const selectedNode = computed(() => nodes.value.find((n) => n.id === selectedNodeId.value) ?? null)
@@ -210,12 +226,13 @@ const fitViewSoon = () => {
   nextTick(() => setTimeout(() => fitView({ padding: 0.4 }), 50))
 }
 
-const openPicker = (fromNodeId: string | null, allowedCategories?: string[]) => {
+const openPicker = (fromNodeId: string | null, allowedCategories?: string[], fromHandle?: string) => {
   pickerConnectFrom.value = fromNodeId
+  pickerConnectFromHandle.value = fromHandle
   pickerAllowedCategories.value =
     allowedCategories ??
     (nodes.value.some((n) => n.type === 'trigger')
-      ? [AI_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY]
+      ? [AI_CATEGORY, LOGIC_CATEGORY, ACTION_CATEGORY, NOTIFICATION_CATEGORY]
       : [TRIGGER_CATEGORY])
   pickerOpen.value = true
 }
@@ -238,7 +255,12 @@ const onPickNodeType = (typeId: string) => {
   addNodes([node])
 
   if (source) {
-    const edge: WorkflowEdge = { id: `${source.id}-${node.id}`, source: source.id, target: node.id }
+    const edge: WorkflowEdge = {
+      id: pickerConnectFromHandle.value ? `${source.id}-${pickerConnectFromHandle.value}-${node.id}` : `${source.id}-${node.id}`,
+      source: source.id,
+      target: node.id,
+      ...(pickerConnectFromHandle.value ? { sourceHandle: pickerConnectFromHandle.value } : {})
+    }
     edges.value.push(edge)
     addEdges([edge])
   }
@@ -246,6 +268,7 @@ const onPickNodeType = (typeId: string) => {
   fitViewSoon()
 
   pickerConnectFrom.value = null
+  pickerConnectFromHandle.value = undefined
 
   // Open the new node's config modal right away instead of making the user click it
   // again after adding it.

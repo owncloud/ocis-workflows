@@ -42,14 +42,24 @@ type NodePosition struct {
 }
 
 // WorkflowEdge connects two nodes, optionally guarded by a condition.
+//
+// SourceHandle identifies which of the source node's output handles this edge starts
+// from (e.g. "true"/"false" for a condition node's two outputs). It's empty for edges
+// leaving every other node kind, which today only ever has a single output handle.
 type WorkflowEdge struct {
-	ID     string    `json:"id"`
-	Source string    `json:"source"`
-	Target string    `json:"target"`
-	Data   *EdgeData `json:"data,omitempty"`
+	ID           string    `json:"id"`
+	Source       string    `json:"source"`
+	Target       string    `json:"target"`
+	SourceHandle string    `json:"sourceHandle,omitempty"`
+	Data         *EdgeData `json:"data,omitempty"`
 }
 
-// EdgeData carries an optional condition expression for the edge.
+// EdgeData carries an optional condition expression for the edge. This is a distinct,
+// still-unimplemented, free-form per-edge gating mechanism (a raw expression string with
+// no defined grammar) and is unrelated to the structured, purpose-built comparison a
+// "condition" WorkflowNode's Data ({left, operator, right}) evaluates — the executor
+// interprets the latter, not this field. Left as-is; superseding it wasn't warranted
+// since the shapes don't match.
 type EdgeData struct {
 	Condition string `json:"condition,omitempty"`
 }
