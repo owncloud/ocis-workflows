@@ -122,6 +122,16 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     defaultData: { actionType: 'rename' }
   },
   {
+    id: 'action-delete',
+    nodeKind: 'action',
+    actionType: 'delete',
+    label: 'Delete File',
+    description: 'Delete the file (moves it to the space trash)',
+    icon: 'delete-bin',
+    category: ACTION_CATEGORY,
+    defaultData: { actionType: 'delete' }
+  },
+  {
     id: 'action-notify',
     nodeKind: 'action',
     actionType: 'notify',
