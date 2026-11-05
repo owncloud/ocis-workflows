@@ -71,3 +71,47 @@
   background: var(--oc-color-swatch-brand-default, #4a90d9);
   color: #fff;
 }
+
+/* Condition node: two output handles stacked on the right edge instead of the usual
+   single centered one, so the "true"/"false" branches are visually distinct and don't
+   overlap (Vue Flow centers same-position handles by default). */
+.workflows-node-condition {
+  min-height: 60px;
+}
+.workflows-node-condition .vue-flow__handle-true {
+  top: 32%;
+}
+.workflows-node-condition .vue-flow__handle-false {
+  top: 68%;
+}
+.workflows-node-branch-buttons {
+  position: absolute;
+  right: -50px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 0;
+  z-index: 5;
+}
+.workflows-node-branch-buttons .workflows-node-add-button {
+  position: static;
+  transform: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: auto;
+  height: auto;
+  padding: 0.15rem 0.4rem;
+  border-radius: 10px;
+  font-size: 0.7rem;
+}
+.workflows-node-add-button-true {
+  border-color: var(--oc-color-swatch-success-default, #2e7d32);
+  color: var(--oc-color-swatch-success-default, #2e7d32);
+}
+.workflows-node-add-button-false {
+  border-color: var(--oc-color-swatch-danger-default, #c62828);
+  color: var(--oc-color-swatch-danger-default, #c62828);
+}
