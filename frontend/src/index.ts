@@ -13,7 +13,7 @@ export default defineWebApplication({
     const appInfo = {
       id: appId,
       name: $gettext('Workflows'),
-      icon: 'flow-chart',
+      icon: 'route',
       color: '#2a6f97'
     }
 
