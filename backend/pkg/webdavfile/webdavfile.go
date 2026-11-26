@@ -161,6 +161,18 @@ func (c *Client) Comment(ctx context.Context, authHeader, davPath, text string) 
 	return nil
 }
 
+// CreateFolder issues a WebDAV MKCOL at davPath, creating it (and only it — parent
+// collections must already exist) in the caller's own space. Idempotent: a folder that
+// already exists (405 or 409) is treated as success, same as the internal mkcol usage
+// in Comment above.
+func (c *Client) CreateFolder(ctx context.Context, authHeader, davPath string) error {
+	userID, err := c.ocisClient.Me(ctx, authHeader)
+	if err != nil {
+		return fmt.Errorf("resolve current user: %w", err)
+	}
+	return c.mkcol(ctx, authHeader, userID, davPath)
+}
+
 func (c *Client) mkcol(ctx context.Context, authHeader, userID, davPath string) error {
 	req, err := http.NewRequestWithContext(ctx, "MKCOL", c.davURL(userID, davPath), nil)
 	if err != nil {

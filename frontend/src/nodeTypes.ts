@@ -122,6 +122,16 @@ export const NODE_TYPES: NodeTypeDefinition[] = [
     defaultData: { actionType: 'rename' }
   },
   {
+    id: 'action-create-folder',
+    nodeKind: 'action',
+    actionType: 'createFolder',
+    label: 'Create Folder',
+    description: 'Create a folder at a path, e.g. to organize output',
+    icon: 'folder-add',
+    category: ACTION_CATEGORY,
+    defaultData: { actionType: 'createFolder' }
+  },
+  {
     id: 'action-notify',
     nodeKind: 'action',
     actionType: 'notify',
